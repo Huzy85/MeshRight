@@ -402,14 +402,19 @@ async def added_scan_mesh(scan_id: str) -> Response:
 
 
 @app.get("/api/doc/{doc_id}/wall-thickness")
-async def wall_thickness(doc_id: str) -> dict:
-    """Where walls are thinner than about two nozzle widths."""
+async def wall_thickness(doc_id: str, flexible: bool = False) -> dict:
+    """Where walls are thinner than about two nozzle widths (three for
+    flexible filament such as TPU, which needs sturdier walls)."""
     from .thickness import measure
 
     doc = _get(doc_id)
     printer = _printer()
     nozzle = printer.nozzle_mm if printer is not None else 0.4
-    limit = 2 * nozzle if (printer is None or printer.technology == "filament") else 0.6
+    flexible = flexible or (printer is not None and printer.material == "TPU")
+    if printer is not None and printer.technology != "filament":
+        limit = 0.6
+    else:
+        limit = (3 if flexible else 2) * nozzle
     try:
         return await run_in_threadpool(lambda: measure(doc.snapshot(), limit))
     except ValueError as exc:

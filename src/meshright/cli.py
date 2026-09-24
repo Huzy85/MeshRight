@@ -123,8 +123,8 @@ def main(argv: list[str] | None = None) -> int:
     fix.add_argument("--out", help="folder for the fixed files (default: meshright-fixed next to the first file)")
     fix.add_argument("--format", choices=("3mf", "stl", "obj"), default="3mf")
     fix.add_argument("--no-cleanup", action="store_true", help="skip the one-click cleanup")
-    fix.add_argument("--preset", choices=("quick", "balanced", "detail"), default="balanced",
-                     help="repair preset: quick (fewest triangles), balanced, or detail (keep every triangle)")
+    fix.add_argument("--preset", choices=("quick", "balanced", "detail", "flexible"), default="balanced",
+                     help="repair preset: quick (fewest triangles), balanced, detail (keep every triangle) or flexible (TPU)")
     fix.add_argument("--solid", action="store_true", help="use Make Solid on files cleanup cannot close")
     fix.add_argument("--best-bottom", action="store_true", help="turn each model to MeshRight's best guess of its bottom")
     fix.add_argument("--no-bed", action="store_true", help="do not centre the models on the bed")

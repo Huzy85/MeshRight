@@ -37,7 +37,8 @@ No settings to learn, no account, and your files never leave your computer.
 
 **Fix**
 - **Clean up** in one click. It shows its plan first; choose Quick print,
-  Balanced or Keep all detail.
+  Balanced, Keep all detail or Flexible (for TPU, which then gets a stricter
+  wall check).
 - **Make Solid** rebuilds badly broken models as one closed solid.
 - **Give it thickness** turns an open surface (a face scan, a mask) into a
   printable shell.
@@ -52,8 +53,10 @@ No settings to learn, no account, and your files never leave your computer.
 
 **Fit your printer**
 - Pick your printer once from a list, or enter its bed size.
-- Shrink to fit, or **split** a big model into parts that fit, with pins so
-  they line up when glued. **Cut in two** anywhere with a plane you slide.
+- Too big? The checklist offers both: **shrink** it to fit, or **split** it
+  into parts that fit, with pins so they line up when glued. **Cut in two**
+  anywhere with a plane you slide.
+- Show a **coin for scale** beside the model to picture its real size.
 
 **Edit**
 - Erase an area or a loose piece, drill holes, measure (and resize from a
@@ -70,7 +73,8 @@ No settings to learn, no account, and your files never leave your computer.
 - Save a project (.meshright) to carry on later.
 
 **And**
-- Several models open at once, in tabs.
+- Several models open at once, in tabs. Very big files can be cancelled
+  while they open.
 - Fix many files at once, in the app or from the command line.
 - Sample models, first-time tips and keyboard shortcuts (press **?**).
 - Runs on your own computer and works offline. The only thing it asks the

@@ -1,4 +1,5 @@
 import io
+import pytest
 
 import trimesh
 from fastapi.testclient import TestClient
@@ -171,3 +172,11 @@ def test_several_models_open_and_close(tmp_path):
     assert client.get(f"/api/doc/{ids[1]}/state").status_code == 404
     assert client.delete(f"/api/doc/{extra}").status_code == 200
     assert client.get(f"/api/doc/{extra}/state").status_code == 404
+
+
+def test_flexible_filament_asks_for_thicker_walls(tmp_path):
+    doc = open_doc(trimesh.creation.box(extents=(30, 30, 1.0)), tmp_path)["doc_id"]
+    normal = client.get(f"/api/doc/{doc}/wall-thickness").json()
+    flexible = client.get(f"/api/doc/{doc}/wall-thickness?flexible=true").json()
+    assert normal["limit_mm"] == 0.8 and flexible["limit_mm"] == pytest.approx(1.2)
+    assert normal["thin_share"] < 0.5 < flexible["thin_share"]
