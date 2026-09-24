@@ -715,3 +715,5 @@ kbd {
 .about button { flex: none; margin-top: 4px; }
 .toggle-line { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 #update-text { color: var(--secondary); font-weight: 400; }
+#checklist li .buttons { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+#open-cancel { flex: none; margin-top: 14px; }

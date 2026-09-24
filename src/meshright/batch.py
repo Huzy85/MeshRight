@@ -39,8 +39,8 @@ class Options:
         if options.format not in FORMATS:
             raise ValueError(f"Export format must be one of: {', '.join(FORMATS)}.")
         options.preset = str(options.preset).lower()
-        if options.preset not in ("quick", "balanced", "detail"):
-            raise ValueError("The repair preset must be quick, balanced or detail.")
+        if options.preset not in ("quick", "balanced", "detail", "flexible"):
+            raise ValueError("The repair preset must be quick, balanced, detail or flexible.")
         for name in ("cleanup", "solid_if_still_broken", "best_bottom", "put_on_bed", "shrink_to_fit"):
             value = getattr(options, name)
             setattr(options, name, value if isinstance(value, bool) else str(value).lower() in ("1", "true", "yes", "on"))

@@ -168,6 +168,7 @@
       <div id="panel-busy" class="placeholder" hidden>
         <div class="spinner"></div>
         <p id="busy-text">Checking your model…</p>
+        <button type="button" class="soft" id="open-cancel">Cancel</button>
       </div>
 
       <div id="panel-error" class="placeholder" hidden>
@@ -202,6 +203,7 @@
             <label class="field"><span>Height</span><input id="size-z" data-axis="z" type="number" min="0.001" step="any" inputmode="decimal"><em>mm</em></label>
           </form>
           <p class="hint">Change one size and the others follow, so the shape stays the same.</p>
+          <label class="toggle-line"><input type="checkbox" id="toggle-coin">Show a coin next to it for scale (23 mm, like a 1 € or 25 ¢ coin)</label>
         </section>
 
         <section>
@@ -331,6 +333,7 @@
         <button type="button" role="radio" aria-checked="false" data-preset="quick" title="Fewest triangles: slices fastest, fine for most prints">Quick print</button>
         <button type="button" role="radio" aria-checked="true" data-preset="balanced" title="Trims only very heavy scans">Balanced</button>
         <button type="button" role="radio" aria-checked="false" data-preset="detail" title="Keeps every triangle, for fine resin prints">Keep all detail</button>
+        <button type="button" role="radio" aria-checked="false" data-preset="flexible" title="For TPU and other flexible filament: Check walls then asks for sturdier walls">Flexible</button>
       </div>
       <p class="sub" id="plan-intro">Checking what needs doing…</p>
       <ul id="plan-steps"></ul>
@@ -386,6 +389,7 @@
             <option value="quick">Quick print (fewest triangles)</option>
             <option value="balanced" selected>Balanced</option>
             <option value="detail">Keep all detail</option>
+            <option value="flexible">Flexible filament (TPU)</option>
           </select>
         </label>
         <label class="stack" for="batch-format">Save as

@@ -143,6 +143,7 @@ function showModel(model, { keepView = false } = {}) {
   cutRange = [worldBox.min.y - span * 0.01, worldBox.max.y + span * 0.01];
   applyWireframe();
   applyCut();
+  if (typeof applyCoin === 'function') applyCoin();
   overhangShade = null;
   roughShade = null;
   colourShade = null;
@@ -356,13 +357,21 @@ function checklistRow(state, number, title, detail, button) {
   small.textContent = detail;
   text.append(strong, small);
   li.append(mark, text);
-  if (button) {
+  // One button, or several stacked (for example Shrink or Split).
+  const buttons = (Array.isArray(button) ? button : [button]).filter(Boolean).map((spec) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = button.primary ? 'primary' : '';
-    b.textContent = button.label;
-    b.addEventListener('click', button.run);
-    li.append(b);
+    b.className = spec.primary ? 'primary' : '';
+    b.textContent = spec.label;
+    b.addEventListener('click', spec.run);
+    return b;
+  });
+  if (buttons.length === 1) li.append(buttons[0]);
+  else if (buttons.length) {
+    const stack = document.createElement('div');
+    stack.className = 'buttons';
+    stack.append(...buttons);
+    li.append(stack);
   }
   return li;
 }
@@ -398,9 +407,11 @@ function renderChecklist(state) {
   if (!printerChosen) {
     list.append(checklistRow('todo', 3, 'Fits your printer', 'Choose your printer to check', { label: 'Choose', run: openPrinter }));
   } else if (tooBig) {
-    const fix = tooBig.fixes[0];
-    list.append(checklistRow('blocked', 3, 'Fits your printer', `Too big for the ${printer.name}`,
-      { label: fix.label, run: () => runAction(fix.action, fix.params) }));
+    // Shrink it, or split it into parts that each fit (keeps the full size).
+    const buttons = tooBig.fixes.map((fix, i) => ({
+      label: fix.label, primary: i === 0, run: () => runAction(fix.action, fix.params),
+    }));
+    list.append(checklistRow('blocked', 3, 'Fits your printer', `Too big for the ${printer.name}: shrink it, or split it into parts`, buttons));
   } else {
     list.append(checklistRow('done', 3, 'Fits your printer', `Fits the ${printer.name}`));
   }
@@ -588,10 +599,19 @@ async function fetchModel(id) {
 }
 
 // Upload with a progress bar: big scans can take a while.
+let currentUpload = null;  // the file being opened, so Cancel can stop it
+
 function uploadWithProgress(url, body, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    currentUpload = xhr;
     xhr.open('POST', url);
+    xhr.addEventListener('abort', () => {
+      const err = new Error('Cancelled');
+      err.cancelled = true;
+      reject(err);
+    });
+    xhr.addEventListener('loadend', () => { if (currentUpload === xhr) currentUpload = null; });
     xhr.upload.addEventListener('progress', (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); });
     xhr.upload.addEventListener('load', () => onProgress(1));
     xhr.addEventListener('load', () => {
@@ -1330,6 +1350,29 @@ async function applyColours() {
 
 $('toggle-colour').addEventListener('change', applyColours);
 
+// A coin on the bed beside the model, so its real size is easy to picture.
+const COIN_MM = { diameter: 23.25, thickness: 2.33 };
+const coinMaterial = new THREE.MeshStandardMaterial({ color: 0xf2cf66, metalness: 0.25, roughness: 0.4 });
+let coin = null;
+
+function applyCoin() {
+  if (coin) { coin.geometry.dispose(); coin.parent?.remove(coin); coin = null; }
+  if (!$('toggle-coin').checked || !content || !currentGeometry) return;
+  const box = new THREE.Box3().setFromBufferAttribute(currentGeometry.getAttribute('position'));
+  const r = COIN_MM.diameter / 2;
+  // three.js cylinders stand along Y; turn it so it lies flat (model Z is up).
+  coin = new THREE.Mesh(new THREE.CylinderGeometry(r, r, COIN_MM.thickness, 64), coinMaterial);
+  coin.rotation.x = Math.PI / 2;
+  coin.position.set(box.max.x + Math.max(8, r), (box.min.y + box.max.y) / 2, COIN_MM.thickness / 2);
+  modelRoot.add(coin);
+}
+
+$('toggle-coin').addEventListener('change', () => {
+  applyCoin();
+  try { localStorage.setItem('meshright.coin', $('toggle-coin').checked ? '1' : ''); } catch { /* not saved */ }
+});
+try { $('toggle-coin').checked = localStorage.getItem('meshright.coin') === '1'; } catch { /* default off */ }
+
 $('toggle-rough').addEventListener('change', () => {
   applyRoughness();
   if (!$('toggle-rough').checked) $('status').hidden = true;
@@ -1616,7 +1659,7 @@ async function checkWalls() {
   $('walls-dialog').showModal();
   let result;
   try {
-    result = await request(`api/doc/${docId}/wall-thickness`);
+    result = await request(`api/doc/${docId}/wall-thickness?flexible=${cleanupPreset === 'flexible'}`);
   } catch (err) {
     $('walls-text').textContent = err.message;
     return;
@@ -2154,7 +2197,10 @@ async function openFile(file) {
   showPanel('panel-busy');
   const busyText = $('busy-text');
   const mb = file.size / 1024 / 1024;
-  const slowNote = mb > 200 ? ` This is a big file (${fmt(mb, 0)} MB), so it can take a minute or two.` : '';
+  // Very big scans need a lot of memory: say so, and point at Cancel.
+  const slowNote = mb > 500
+    ? ` This is a very big file (${fmt(mb, 0)} MB). It can take a few minutes and needs a lot of memory; if your computer slows down, press Cancel.`
+    : mb > 200 ? ` This is a big file (${fmt(mb, 0)} MB), so it can take a minute or two.` : '';
 
   try {
     const body = new FormData();
@@ -2170,9 +2216,22 @@ async function openFile(file) {
     await showState(state, { keepView: false });
     if (state.notice) showStatus(state.notice);
   } catch (err) {
+    if (err.cancelled) return;
     if (loadId === currentLoad) showError(err.message);
   }
 }
+
+// Stop opening a file: back to the model that was open, or the start screen.
+$('open-cancel').addEventListener('click', () => {
+  currentLoad++;  // any late answer for the cancelled file is ignored
+  currentUpload?.abort();
+  if (docId) showPanel('panel-report');
+  else {
+    showPanel('panel-empty');
+    $('drop-hint').hidden = false;
+  }
+  showStatus('Stopped opening the file.');
+});
 
 // ---------------------------------------------------------------- several models open
 
@@ -2246,6 +2305,7 @@ async function closeTab(id) {
   exitModes();
   docId = null;
   clearModel();
+  applyCoin();  // no model: the coin goes too
   $('drop-hint').hidden = false;
   $('view-controls').hidden = true;
   showPanel('panel-empty');

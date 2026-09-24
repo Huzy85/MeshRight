@@ -30,6 +30,7 @@ PRESETS = {
     "quick": (150_000, 150_000),     # Quick print: slices fastest; fine for most prints
     "balanced": (REDUCE_ABOVE_TRIANGLES, COMFORTABLE_TRIANGLES),
     "detail": None,                  # Keep all detail: for fine resin prints
+    "flexible": (REDUCE_ABOVE_TRIANGLES, COMFORTABLE_TRIANGLES),  # TPU: as balanced; walls checked thicker
 }
 
 

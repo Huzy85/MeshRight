@@ -330,8 +330,9 @@ def cut_flat_bottom(mesh, cut_mm):
         ),
         Param(
             "preset", "choice",
-            "quick (fewest triangles, slices fastest), balanced, or detail (keep every triangle).",
-            choices=("quick", "balanced", "detail"), default="balanced",
+            "quick (fewest triangles, slices fastest), balanced, detail (keep every triangle) "
+            "or flexible (as balanced, for TPU and other flexible filament).",
+            choices=("quick", "balanced", "detail", "flexible"), default="balanced",
         ),
     ],
 )
