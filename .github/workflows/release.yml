@@ -1,10 +1,12 @@
 name: Build apps
 
 # Builds the one-file MeshRight app for Windows, macOS and Linux.
-# Run it by hand from the Actions tab, or push a tag like v0.2.0 to also
-# publish a GitHub release with the three files attached.
+# Releases normally happen by themselves (see pypi.yml, which calls this).
+# It can also be run by hand from the Actions tab, and a pushed tag like
+# v0.2.0 still publishes a GitHub release with the three files attached.
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     tags: ["v*"]
