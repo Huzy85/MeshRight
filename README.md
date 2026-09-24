@@ -34,6 +34,8 @@ No settings to learn, no account, and your files never leave your computer.
   inside-out parts, loose crumbs, walls too thin to print.
 - Problems are shown on the model, plus a **Cut view**, an **Overhangs** view
   and a **Rough spots** view.
+- **Show what changed**: after repairs, the model turns green where it is
+  untouched and red where the surface moved, compared with your original file.
 
 **Fix**
 - **Clean up** in one click. It shows its plan first; choose Quick print,

@@ -49,6 +49,11 @@ const roughMaterial = new THREE.MeshStandardMaterial({
   vertexColors: true, roughness: 0.7, flatShading: true,
   polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
 });
+// What changed since the original file (see applyChanges).
+const changeMaterial = new THREE.MeshStandardMaterial({
+  vertexColors: true, roughness: 0.7, flatShading: true,
+  polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+});
 // The model's own colours (colour scans), drawn over the plain surface.
 const colourMaterial = new THREE.MeshStandardMaterial({
   vertexColors: true, roughness: 0.75, flatShading: true,
@@ -147,6 +152,8 @@ function showModel(model, { keepView = false } = {}) {
   overhangShade = null;
   roughShade = null;
   colourShade = null;
+  changeShade = null;
+  if (typeof applyChanges === 'function') applyChanges();
   if (typeof applyOverhangs === 'function') applyOverhangs();
   if (typeof applyColours === 'function') applyColours();
   if (typeof applyRoughness === 'function') applyRoughness();
@@ -194,6 +201,7 @@ function applyCut() {
   frontMaterial.clippingPlanes = planes;
   backMaterial.clippingPlanes = planes;
   roughMaterial.clippingPlanes = planes;
+  changeMaterial.clippingPlanes = planes;
   colourMaterial.clippingPlanes = planes;
   if (on) {
     const share = Number($('cut-height').value) / 1000;
@@ -1372,6 +1380,55 @@ $('toggle-coin').addEventListener('change', () => {
   try { localStorage.setItem('meshright.coin', $('toggle-coin').checked ? '1' : ''); } catch { /* not saved */ }
 });
 try { $('toggle-coin').checked = localStorage.getItem('meshright.coin') === '1'; } catch { /* default off */ }
+
+// What changed: green where the surface is as in the original file, red
+// where repairs moved it. Uses the same colours as Rough spots.
+let changeShade = null;
+
+async function applyChanges() {
+  if (changeShade) {
+    changeShade.geometry.dispose();
+    changeShade.parent?.remove(changeShade);
+    changeShade = null;
+  }
+  if (!$('toggle-changes').checked || !content || !currentGeometry) return;
+  const geometry = currentGeometry;
+  const forDoc = docId;
+  let data;
+  try {
+    data = await request(`api/doc/${docId}/changes`);
+  } catch (err) {
+    showStatus(err.message, 'error');
+    return;
+  }
+  if (forDoc !== docId || geometry !== currentGeometry || !$('toggle-changes').checked || changeShade) return;
+  const levels = Uint8Array.from(atob(data.levels), (c) => c.charCodeAt(0));
+  const position = geometry.getAttribute('position');
+  if (levels.length * 3 !== position.count) return;
+  const colours = new Float32Array(position.count * 3);
+  const palette = new Map();
+  for (let f = 0; f < levels.length; f++) {
+    let c = palette.get(levels[f]);
+    if (!c) { c = roughColour(levels[f]); palette.set(levels[f], c); }
+    for (let k = 0; k < 3; k++) colours.set([c.r, c.g, c.b], (f * 3 + k) * 3);
+  }
+  const shade = new THREE.BufferGeometry();
+  shade.setAttribute('position', position.clone());
+  shade.setAttribute('color', new THREE.Float32BufferAttribute(colours, 3));
+  changeShade = new THREE.Mesh(shade, changeMaterial);
+  changeShade.renderOrder = 4;
+  content.add(changeShade);
+  if (toolActive()) return;
+  const moved = Math.round(data.moved_share * 100);
+  showStatus(moved > 0
+    ? `Compared with the original file: ${moved}% of the surface moved more than 0.1 mm (up to ${fmt(data.largest_mm, 2)} mm).`
+    : 'Compared with the original file: the surface has not moved.');
+}
+
+$('toggle-changes').addEventListener('change', () => {
+  applyChanges();
+  if (!$('toggle-changes').checked) $('status').hidden = true;
+});
 
 $('toggle-rough').addEventListener('change', () => {
   applyRoughness();

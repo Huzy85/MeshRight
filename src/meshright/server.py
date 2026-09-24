@@ -568,6 +568,24 @@ async def colours(doc_id: str) -> Response:
     return Response(content=await run_in_threadpool(work), media_type="application/octet-stream")
 
 
+@app.get("/api/doc/{doc_id}/changes")
+async def changes(doc_id: str) -> dict:
+    """How far the shown surface has moved from the original file, per
+    triangle (0 to 255, base64), with the largest move and the moved share."""
+    from . import quality
+
+    doc = _get(doc_id)
+
+    def work():
+        entry = _display_entry(doc_id, doc)
+        if "changes" not in entry:
+            entry["changes"] = quality.change_levels(doc.original, entry["shown"])
+        return entry["changes"]
+
+    levels, largest, moved = await run_in_threadpool(work)
+    return {"levels": base64.b64encode(levels.tobytes()).decode("ascii"), "largest_mm": round(largest, 3), "moved_share": round(moved, 4)}
+
+
 @app.get("/api/doc/{doc_id}/roughness")
 async def roughness(doc_id: str) -> dict:
     """How rough each triangle the viewer shows is, 0 to 255 (base64), and
