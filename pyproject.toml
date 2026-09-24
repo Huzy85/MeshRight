@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "meshright"
+dynamic = ["version"]
+description = "Free, open source, browser-based 3D mesh checking and repair for 3D printing."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "MeshRight contributors" }]
+requires-python = ">=3.10"
+keywords = ["3d-printing", "mesh", "mesh-repair", "stl", "3d-scanning", "meshmixer"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+dependencies = [
+    "trimesh>=4.0",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "networkx>=3.0",
+    "lxml>=4.9",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "python-multipart>=0.0.9",
+    "pymeshfix>=0.17",
+    "fast-simplification>=0.1.7",
+    "PyMCubes>=0.1.4",
+    "manifold3d>=2.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+meshright = "meshright.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Huzy85/MeshRight"
+Issues = "https://github.com/Huzy85/MeshRight/issues"
+
+[tool.hatch.version]
+path = "src/meshright/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/meshright"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
