@@ -1,0 +1,71 @@
+"""Surface quality: where a scan is rough.
+
+Two signs of scanner noise, and a point must show both to count as rough:
+
+1. Noise makes the surface zig-zag, bending outwards across some edges and
+   inwards across others. Real shape bends one way at a point: every edge of
+   a cube or a cylinder bends outwards. Sharp designed creases (steeper than
+   about 57 degrees) are left out, so the inner corner where two blocks join
+   does not count.
+2. Noise bulges differently from the points right next to it, while a smooth
+   curve (even a saddle, like the inside of a ring) bulges about the same.
+
+The result is blurred a little so rough areas show as patches, not speckles.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import trimesh
+from scipy import sparse
+
+CREASE = 1.0          # radians; steeper bends are designed edges, not noise
+FULL_BEND = 0.08      # average bend (radians) shown as fully rough
+FULL_BULGE = 0.12     # bulge difference (share of edge length) shown as fully rough
+ROUGH = 0.4           # levels above this count as rough in the summary
+
+
+def _mean(adjacency, degree, values):
+    return (adjacency @ values) / degree.reshape(-1, *([1] * (values.ndim - 1)))
+
+
+def vertex_roughness(mesh: trimesh.Trimesh) -> np.ndarray:
+    """0 (clean) to 1 (rough) for each vertex."""
+    n = len(mesh.vertices)
+    if n == 0 or len(mesh.faces) < 2:
+        return np.zeros(n)
+    edges = mesh.face_adjacency_edges
+    angles = np.where(mesh.face_adjacency_angles < CREASE, mesh.face_adjacency_angles, 0.0)
+    convex = np.repeat(mesh.face_adjacency_convex, 2)
+    ends = edges.ravel()
+    twice = np.repeat(angles, 2)
+    outward = np.bincount(ends, weights=np.where(convex, twice, 0), minlength=n)
+    inward = np.bincount(ends, weights=np.where(convex, 0, twice), minlength=n)
+    count = np.maximum(np.bincount(ends, minlength=n), 1)
+    bend = np.minimum(outward, inward) / count
+
+    unique = mesh.edges_unique
+    rows = np.concatenate([unique[:, 0], unique[:, 1]])
+    cols = np.concatenate([unique[:, 1], unique[:, 0]])
+    adjacency = sparse.csr_matrix((np.ones(len(rows)), (rows, cols)), shape=(n, n))
+    degree = np.maximum(np.asarray(adjacency.sum(axis=1)).ravel(), 1)
+    lengths = mesh.edges_unique_length
+    edge_mean = np.maximum(np.bincount(rows, weights=np.concatenate([lengths, lengths]), minlength=n) / degree, 1e-12)
+    bulge = np.einsum("ij,ij->i", _mean(adjacency, degree, mesh.vertices) - mesh.vertices, mesh.vertex_normals) / edge_mean
+    wobble = np.abs(bulge - _mean(adjacency, degree, bulge))
+
+    rough = np.minimum(np.clip(bend / FULL_BEND, 0, 1), np.clip(wobble / FULL_BULGE, 0, 1))
+    for _ in range(2):
+        rough = 0.5 * rough + 0.5 * _mean(adjacency, degree, rough)
+    return rough
+
+
+def face_levels(mesh: trimesh.Trimesh) -> tuple[np.ndarray, float]:
+    """Per triangle 0..255 (clean to rough) and the share of the surface that
+    is rough."""
+    if len(mesh.faces) == 0:
+        return np.zeros(0, dtype=np.uint8), 0.0
+    levels = vertex_roughness(mesh)[mesh.faces].mean(axis=1)
+    area = mesh.area_faces
+    share = float(area[levels > ROUGH].sum() / area.sum()) if area.sum() > 0 else 0.0
+    return np.round(levels * 255).astype(np.uint8), share
