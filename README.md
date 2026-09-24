@@ -49,7 +49,8 @@ No settings to learn, no account, and your files never leave your computer.
   yourself.
 - **Best way to print** compares placements for fewest supports, strongest
   part and fastest print.
-- Warns when a model would tip over, and offers a flat base.
+- Warns when a model would tip over, and offers to cut the bottom flat or
+  add a flat foot (which keeps the whole model).
 
 **Fit your printer**
 - Pick your printer once from a list, or enter its bed size.

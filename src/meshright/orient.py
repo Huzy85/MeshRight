@@ -194,6 +194,35 @@ def cut_flat_bottom(mesh: trimesh.Trimesh, cut_mm: float) -> trimesh.Trimesh:
     return place_on_bed(out)
 
 
+def add_flat_base(mesh: trimesh.Trimesh, depth_mm: float) -> trimesh.Trimesh:
+    """Give a rounded bottom a flat foot without removing anything: the
+    outline ``depth_mm`` above the lowest point is filled straight down to
+    the bed. The model keeps its full height."""
+    from .cut import CutError, _to_manifold
+
+    try:
+        solid = _to_manifold(mesh)
+    except CutError:
+        raise ValueError("The model must be closed before a base can be added. Run Clean up first.") from None
+    low = float(mesh.bounds[0][2])
+    outline = solid.slice(low + depth_mm)
+    if outline.is_empty():
+        raise ValueError("There is nothing to stand on at that height. Try a thicker base.")
+    # Start the foot a hair below the lowest point: a foot bottom touching
+    # that point exactly leaves a pinched corner in the joined surface.
+    nudge = 0.005
+    foot = outline.extrude(depth_mm + nudge).translate((0.0, 0.0, low - nudge))
+    joined = (solid + foot).to_mesh()
+    # Taken as manifold3d made it: merging near-identical corners here would
+    # break the closed surface.
+    result = trimesh.Trimesh(np.asarray(joined.vert_properties)[:, :3], np.asarray(joined.tri_verts), process=False)
+    from . import colour
+
+    if colour.has(mesh):
+        colour.transfer(mesh, result)  # before it moves onto the bed
+    return place_on_bed(result)
+
+
 def footprint(mesh: trimesh.Trimesh, tolerance_mm: float = 0.3) -> tuple[float, bool]:
     """Area touching the bed (mm², from the outline of the touching points)
     and whether the centre of mass sits above it."""

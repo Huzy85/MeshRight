@@ -392,12 +392,12 @@ function renderChecklist(state) {
 
   // 2. Stand it up
   const stand = STAND_CODES.map((c) => issues.get(c)).find(Boolean);
-  const standFix = stand && (stand.fixes || [])[0];
+  const standFixes = (stand && stand.fixes) || [];
   list.append(checklistRow(
     stand ? 'todo' : 'done', 2, 'Stand it up',
     stand ? stand.title : 'Sits steadily on the bed',
-    standFix
-      ? { label: standFix.label, run: () => runAction(standFix.action, standFix.params) }
+    standFixes.length
+      ? standFixes.map((fix) => ({ label: fix.label, run: () => runAction(fix.action, fix.params) }))
       : { label: 'Which way is up?', run: openUp },
   ));
   if (!stand) list.lastChild.classList.add('keep-button');

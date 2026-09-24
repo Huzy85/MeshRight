@@ -120,3 +120,15 @@ def test_a_hole_in_the_side_is_not_taken_for_the_turntable_edge():
     best = up_candidates(scan)[0]
     assert "turntable" in best["reason"]
     assert np.dot(best["down"], [0, 0, -1]) > 0.99
+
+
+def test_flat_base_keeps_the_whole_model():
+    ball = egg()
+    issue = next(i for i in analyze(ball).issues if i.code == "small_contact")
+    fix = next(f for f in issue.fixes if f["action"] == "add_flat_base")
+    mesh, receipt = run_action(ball, fix["action"], fix["params"])
+    assert mesh.is_watertight and mesh.volume > ball.volume
+    assert mesh.extents[2] == pytest.approx(ball.extents[2], abs=0.01)  # nothing cut off
+    assert not any(i.code in ("may_tip_over", "small_contact") for i in analyze(mesh).issues)
+    assert "nothing was cut off" in receipt
+    assert np.isclose(mesh.bounds[0][2], 0)
