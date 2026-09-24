@@ -310,6 +310,25 @@ def cut_flat_bottom(mesh, cut_mm):
     return result, f"Cut {cut_mm:g} mm off the bottom and sealed it flat"
 
 
+@action(
+    "add_flat_base",
+    "Add a flat base",
+    "Give a rounded bottom a flat foot so the model stands steadily and sticks "
+    "to the bed, without cutting anything off. The model must be closed.",
+    [Param("depth_mm", "number", "How high the flat foot reaches, in mm.", minimum=0.05, maximum=10000)],
+)
+def add_flat_base(mesh, depth_mm):
+    from . import orient
+
+    if depth_mm >= mesh.extents[2]:
+        raise ActionError("The base cannot be as tall as the model.")
+    try:
+        result = orient.add_flat_base(mesh, depth_mm)
+    except ValueError as exc:
+        raise ActionError(str(exc)) from exc
+    return result, f"Added a {depth_mm:g} mm flat base; nothing was cut off"
+
+
 # ---------------------------------------------------------------- repairs
 
 @action(

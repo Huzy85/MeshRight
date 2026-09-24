@@ -224,7 +224,10 @@ def _stability_issues(mesh: trimesh.Trimesh) -> list[Issue]:
     if steady and area >= min(MIN_CONTACT_MM2, SMALL_CONTACT_SHARE * base):
         return []
     cut = suggest_flat_cut(mesh)
-    fixes = [{"label": f"Cut {cut:g} mm flat", "action": "cut_flat_bottom", "params": {"cut_mm": cut}}] if cut else []
+    fixes = [
+        {"label": f"Cut {cut:g} mm flat", "action": "cut_flat_bottom", "params": {"cut_mm": cut}},
+        {"label": f"Add a {cut:g} mm flat base", "action": "add_flat_base", "params": {"depth_mm": cut}},
+    ] if cut else []
     if not steady:
         return [Issue(
             code="may_tip_over",
