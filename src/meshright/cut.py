@@ -97,6 +97,136 @@ def _pins(count: int, diameter: float, depth: float) -> list[trimesh.Trimesh]:
     return pins
 
 
+# ---------------------------------------------------------------- part numbers
+
+# Seven-segment digits: simple strokes, so no font is needed.
+_SEGMENTS = {"0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fgbc",
+             "5": "afgcd", "6": "afgedc", "7": "abc", "8": "abcdefg", "9": "abcdfg"}
+NUMBER_DEPTH_MM = 0.6
+
+
+def _digits(text: str, height: float):
+    """The number as a flat shape, centred on (0, 0)."""
+    import manifold3d
+
+    w, t = 0.6 * height, 0.17 * height
+    gap = 0.35 * w
+    boxes = {
+        "a": (0, height - t, w, height), "d": (0, 0, w, t), "g": (0, height / 2 - t / 2, w, height / 2 + t / 2),
+        "b": (w - t, height / 2, w, height), "c": (w - t, 0, w, height / 2),
+        "e": (0, 0, t, height / 2), "f": (0, height / 2, t, height),
+    }
+    shapes = []
+    for i, digit in enumerate(text):
+        x = i * (w + gap)
+        for seg in _SEGMENTS[digit]:
+            u0, v0, u1, v1 = boxes[seg]
+            shapes.append(manifold3d.CrossSection.square((u1 - u0, v1 - v0)).translate((x + u0, v0)))
+    width = len(text) * w + (len(text) - 1) * gap
+    return manifold3d.CrossSection.batch_boolean(shapes, manifold3d.OpType.Add).translate((-width / 2, -height / 2))
+
+
+def _engrave(piece, axis: int, position: float, side: int, text: str):
+    """Engrave ``text`` into the piece's cut face on this plane, away from
+    the edges and pin holes. ``side`` is +1 when the piece lies above the
+    plane. Returns the engraved piece, or None when there is no room."""
+    import manifold3d
+
+    turn = _TO_Z[axis]
+    section = piece.transform(_affine(turn)).slice(position + side * 0.05)
+    if section.is_empty():
+        return None
+    x0, y0, x1, y1 = section.bounds()
+    for wanted in (10.0, 7.0, 5.0, 3.5):
+        height = min(wanted, 0.35 * min(x1 - x0, y1 - y0))
+        if height < 3.0:
+            return None
+        label = _digits(text, height)
+        lx0, ly0, lx1, ly1 = label.bounds()
+        # Offsetting inwards by half the label keeps it clear of the edge
+        # and of pin holes (which are holes in the cut face).
+        inner = section.offset(-(max(lx1 - lx0, ly1 - ly0) / 2 + 1.0), manifold3d.JoinType.Round)
+        if inner.is_empty():
+            continue
+        region = max(inner.decompose(), key=lambda r: r.area())
+        rx0, ry0, rx1, ry1 = region.bounds()
+        spot = ((rx0 + rx1) / 2, (ry0 + ry1) / 2)
+        probe = manifold3d.CrossSection.square((0.2, 0.2), True).translate(spot)
+        if (region ^ probe).area() < 0.03:  # the middle is outside (an odd shape): use a corner of the region
+            spot = tuple(region.to_polygons()[0][0])
+        if side > 0:
+            label = label.mirror((1.0, 0.0))  # read from below, it must not appear mirrored
+        z0 = position - 0.1 if side > 0 else position - NUMBER_DEPTH_MM
+        cutter = label.translate(spot).extrude(NUMBER_DEPTH_MM + 0.1).translate((0.0, 0.0, z0))
+        return piece - cutter.transform(_affine(turn.T))
+    return None
+
+
+def _number(pieces: list, plan: dict[int, list[float]]) -> tuple[list, list[tuple[int, int]], int]:
+    """Number the pieces in assembly order (the lowest first, then its
+    neighbours) and engrave each number on a cut face. Returns the pieces in
+    that order, which numbered parts join, and how many were engraved."""
+    boxes = [np.array(p.bounding_box()).reshape(2, 3) for p in pieces]
+    planes = [(axis, pos) for axis, positions in plan.items() for pos in positions]
+    touching = []
+    for low, high in boxes:
+        faces = []
+        for axis, pos in planes:
+            if abs(low[axis] - pos) < 1e-3:
+                faces.append((axis, pos, 1))
+            elif abs(high[axis] - pos) < 1e-3:
+                faces.append((axis, pos, -1))
+        touching.append(faces)
+
+    def overlap(i, j, axis):
+        others = [a for a in range(3) if a != axis]
+        return all(min(boxes[i][1][a], boxes[j][1][a]) - max(boxes[i][0][a], boxes[j][0][a]) > 0.1 for a in others)
+
+    neighbours = {i: set() for i in range(len(pieces))}
+    for i in range(len(pieces)):
+        for j in range(i + 1, len(pieces)):
+            for axis, pos, side in touching[i]:
+                if (axis, pos, -side) in touching[j] and overlap(i, j, axis):
+                    neighbours[i].add(j)
+                    neighbours[j].add(i)
+
+    order, seen = [], set()
+    # Start from the lowest piece; among equals, an end piece (fewest
+    # neighbours), so a row of parts is numbered along the row.
+    by_height = sorted(range(len(pieces)), key=lambda i: (round(boxes[i][0][2], 3), len(neighbours[i]), -pieces[i].volume()))
+    for start in by_height:
+        if start in seen:
+            continue
+        queue = [start]
+        seen.add(start)
+        while queue:
+            i = queue.pop(0)
+            order.append(i)
+            for j in sorted(neighbours[i] - seen, key=lambda j: round(boxes[j][0][2], 3)):
+                seen.add(j)
+                queue.append(j)
+    number = {piece: n + 1 for n, piece in enumerate(order)}
+
+    engraved = 0
+    result = []
+    for i in order:
+        piece = pieces[i]
+        for axis, pos, side in touching[i]:
+            marked = _engrave(piece, axis, pos, side, str(number[i]))
+            if marked is not None:
+                piece = marked
+                engraved += 1
+                break
+        result.append(piece)
+    joins = sorted({tuple(sorted((number[i], number[j]))) for i in neighbours for j in neighbours[i]})
+    return result, joins, engraved
+
+
+def _joins_text(joins: list[tuple[int, int]]) -> str:
+    shown = "; ".join(f"{a} joins {b}" for a, b in joins[:8])
+    return shown + ("; …" if len(joins) > 8 else "")
+
+
 def _lay_out(parts: list[trimesh.Trimesh]) -> trimesh.Trimesh:
     """Arrange the parts in tidy rows on the bed, each resting on it."""
     parts = sorted((p.copy() for p in parts), key=lambda p: -p.extents[1])
@@ -118,9 +248,11 @@ def _lay_out(parts: list[trimesh.Trimesh]) -> trimesh.Trimesh:
     return combined
 
 
-def cut(mesh: trimesh.Trimesh, plan: dict[int, list[float]], pins: bool = True, pin_mm: float = 4.0) -> tuple[trimesh.Trimesh, int, int]:
+def cut(mesh: trimesh.Trimesh, plan: dict[int, list[float]], pins: bool = True, pin_mm: float = 4.0,
+        numbers: bool = True) -> tuple[trimesh.Trimesh, int, int, list[tuple[int, int]] | None]:
     """Cut along the planned planes ({axis: [positions]}). Returns the laid
-    out parts (with pins to print), the number of parts and of pins."""
+    out parts (with pins to print), the number of parts and of pins, and
+    which numbered parts join (None when the parts are not numbered)."""
     solid = _to_manifold(mesh)
     radius = pin_mm / 2 + PIN_CLEARANCE_MM / 2
     depth = max(3.0, 1.5 * pin_mm)
@@ -152,6 +284,10 @@ def cut(mesh: trimesh.Trimesh, plan: dict[int, list[float]], pins: bool = True, 
                         next_pieces.append(part)
             pieces = next_pieces
 
+    joins = None
+    if numbers and len(pieces) > 1:
+        pieces, joins, _ = _number(pieces, plan)
+
     parts = [_to_mesh(p) for p in pieces]
     parts = [p for p in parts if len(p.faces)]
     from . import colour
@@ -175,18 +311,21 @@ def cut(mesh: trimesh.Trimesh, plan: dict[int, list[float]], pins: bool = True, 
     if coloured:
         for pin in extra:
             pin.visual = trimesh.visual.ColorVisuals(pin, vertex_colors=np.tile(colour.NEUTRAL, (len(pin.vertices), 1)))
-    return _lay_out(parts + extra), len(parts), len(extra)
+    return _lay_out(parts + extra), len(parts), len(extra), joins
 
 
-def cut_in_two(mesh: trimesh.Trimesh, axis: str, position: float, pins: bool, pin_mm: float) -> tuple[trimesh.Trimesh, str]:
+def cut_in_two(mesh: trimesh.Trimesh, axis: str, position: float, pins: bool, pin_mm: float,
+               numbers: bool = True) -> tuple[trimesh.Trimesh, str]:
     a = AXES[axis]
     low, high = mesh.bounds[0][a], mesh.bounds[1][a]
     if not low < position < high:
         raise CutError(f"The cut must be inside the model: between {low:.4g} and {high:.4g} mm along {axis.upper()}.")
-    result, parts, pin_count = cut(mesh, {a: [position]}, pins, pin_mm)
-    receipt = f"Cut into {parts} parts along {axis.upper()} at {position:.4g} mm"
+    result, parts, pin_count, joins = cut(mesh, {a: [position]}, pins, pin_mm, numbers)
+    receipt = f"Cut into {parts} {'numbered ' if joins is not None else ''}parts along {axis.upper()} at {position:.4g} mm"
     if pin_count:
         receipt += f", with {pin_count} pin holes and {pin_count} pins to print"
+    if joins:
+        receipt += f". Assembly: {_joins_text(joins)}"
     return result, receipt
 
 
@@ -203,15 +342,18 @@ def split_plan(mesh: trimesh.Trimesh, bed: tuple[float, float, float]) -> dict[i
     return plan
 
 
-def split_to_fit(mesh: trimesh.Trimesh, bed: tuple[float, float, float], pins: bool, pin_mm: float) -> tuple[trimesh.Trimesh, str]:
+def split_to_fit(mesh: trimesh.Trimesh, bed: tuple[float, float, float], pins: bool, pin_mm: float,
+                 numbers: bool = True) -> tuple[trimesh.Trimesh, str]:
     plan = split_plan(mesh, bed)
     if not plan:
         raise CutError("It already fits the printer, so there is nothing to split.")
     if sum(len(p) + 1 for p in plan.values()) > 40:
         raise CutError("That would make too many parts. Shrink the model a little first.")
-    result, parts, pin_count = cut(mesh, plan, pins, pin_mm)
+    result, parts, pin_count, joins = cut(mesh, plan, pins, pin_mm, numbers)
     names = " and ".join("XYZ"[a] for a in plan)
-    receipt = f"Split into {parts} parts along {names} so each fits the printer"
+    receipt = f"Split into {parts} {'numbered ' if joins is not None else ''}parts along {names} so each fits the printer"
     if pin_count:
         receipt += f", with {pin_count} pin holes and {pin_count} pins to print"
+    if joins:
+        receipt += f". Assembly: {_joins_text(joins)}"
     return result, receipt

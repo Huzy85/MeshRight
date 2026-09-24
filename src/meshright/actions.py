@@ -611,6 +611,7 @@ def reduce_detail(mesh, triangles):
 PIN_PARAMS = [
     Param("pins", "boolean", "Add pin holes across the cut, and pins to print, so the parts line up.", default=True),
     Param("pin_mm", "number", "Pin thickness in mm.", minimum=1.5, maximum=20, default=4.0),
+    Param("numbers", "boolean", "Engrave each part's number on a cut face, in assembly order.", default=True),
 ]
 
 
@@ -621,11 +622,11 @@ PIN_PARAMS = [
     "line up when glued. The model must be closed.",
     [AXIS, Param("position_mm", "number", "Where to cut along that axis, in mm (model coordinates)."), *PIN_PARAMS],
 )
-def cut_in_two(mesh, axis, position_mm, pins, pin_mm):
+def cut_in_two(mesh, axis, position_mm, pins, pin_mm, numbers):
     from . import cut
 
     try:
-        return cut.cut_in_two(mesh, axis, position_mm, pins, pin_mm)
+        return cut.cut_in_two(mesh, axis, position_mm, pins, pin_mm, numbers)
     except cut.CutError as exc:
         raise ActionError(str(exc)) from exc
 
@@ -642,11 +643,11 @@ def cut_in_two(mesh, axis, position_mm, pins, pin_mm):
         *PIN_PARAMS,
     ],
 )
-def split_to_fit(mesh, bed_x, bed_y, bed_z, pins, pin_mm):
+def split_to_fit(mesh, bed_x, bed_y, bed_z, pins, pin_mm, numbers):
     from . import cut
 
     try:
-        return cut.split_to_fit(mesh, (bed_x, bed_y, bed_z), pins, pin_mm)
+        return cut.split_to_fit(mesh, (bed_x, bed_y, bed_z), pins, pin_mm, numbers)
     except cut.CutError as exc:
         raise ActionError(str(exc)) from exc
 

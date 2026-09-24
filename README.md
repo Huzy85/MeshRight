@@ -56,6 +56,8 @@ No settings to learn, no account, and your files never leave your computer.
 - Too big? The checklist offers both: **shrink** it to fit, or **split** it
   into parts that fit, with pins so they line up when glued. **Cut in two**
   anywhere with a plane you slide.
+- **Numbered parts**: each part's number is engraved on a cut face (hidden
+  once glued), in assembly order, and MeshRight tells you which parts join.
 - Show a **coin for scale** beside the model to picture its real size.
 
 **Edit**

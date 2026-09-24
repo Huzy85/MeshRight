@@ -1448,7 +1448,7 @@ for (const button of document.querySelectorAll('[data-cut-axis]')) {
   });
 }
 $('cutter-do').addEventListener('click', () => {
-  const params = { axis: cutterAxis, position_mm: cutterPosition(), pins: $('cutter-pins').checked };
+  const params = { axis: cutterAxis, position_mm: cutterPosition(), pins: $('cutter-pins').checked, numbers: $('cutter-numbers').checked };
   stopCutter();
   runAction('cut_in_two', params);
 });

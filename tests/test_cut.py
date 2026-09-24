@@ -33,7 +33,7 @@ def test_cut_in_two_with_pins():
 
 
 def test_cut_without_pins():
-    mesh, receipt = run_action(block(), "cut_in_two", {"axis": "z", "position_mm": 15, "pins": False})
+    mesh, receipt = run_action(block(), "cut_in_two", {"axis": "z", "position_mm": 15, "pins": False, "numbers": False})
     parts = parts_of(mesh)
     assert len(parts) == 2 and sum(p.volume for p in parts) == pytest.approx(block().volume)
     assert "pin" not in receipt
@@ -88,3 +88,25 @@ def test_add_a_hole_through_and_blind():
 def test_a_hole_that_misses_is_refused():
     with pytest.raises(ActionError, match="missed"):
         run_action(block(), "add_hole", {"point": [500, 500, 500], "direction": [0, 0, -1], "diameter_mm": 5})
+
+
+def test_parts_are_numbered_in_assembly_order():
+    mesh, receipt = run_action(block(), "cut_in_two", {"axis": "z", "position_mm": 20, "pins": False})
+    parts = parts_of(mesh)
+    assert len(parts) == 2 and all(p.is_watertight for p in parts)
+    # The engraved numbers take a little material away.
+    assert block().volume - 5 > sum(p.volume for p in parts) > block().volume - 300
+    assert "2 numbered parts" in receipt and "Assembly: 1 joins 2" in receipt
+
+
+def test_a_row_of_parts_is_numbered_along_the_row():
+    bar = trimesh.creation.box(extents=(300, 40, 30))
+    bar.apply_translation((0, 0, 15))
+    mesh, receipt = run_action(bar, "split_to_fit", {"bed_x": 120, "bed_y": 120, "bed_z": 120, "pins": False})
+    assert "3 numbered parts" in receipt
+    assert "Assembly: 1 joins 2; 2 joins 3" in receipt
+
+
+def test_numbers_can_be_left_off():
+    _, receipt = run_action(block(), "cut_in_two", {"axis": "z", "position_mm": 20, "numbers": False})
+    assert "numbered" not in receipt and "Assembly" not in receipt
