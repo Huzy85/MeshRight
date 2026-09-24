@@ -1,6 +1,6 @@
 # Changes
 
-## 0.1.2 (not released yet)
+## 0.1.2
 
 - **Show what changed**: a switch under History colours the model green where
   it is as in the original file and red where repairs moved the surface.

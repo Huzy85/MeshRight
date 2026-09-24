@@ -67,6 +67,14 @@ test, then a button and (if needed) a sheet in `web/index.html` and
 `web/app.js`. New `POST /api/doc/{id}/...` routes in `server.py` must come
 before the catch-all route for undo and redo.
 
+## Releasing a new version
+
+Releases happen by themselves. Add a section for the new version at the top
+of `CHANGELOG.md` (`## 0.1.3` and a list of changes), then raise
+`__version__` in `src/meshright/__init__.py` to match. When that reaches
+`main`, GitHub builds the Windows, macOS and Linux apps, publishes a release
+with them and the changelog notes, and uploads the package to PyPI.
+
 ## Guidelines
 
 - **Beginners first.** Every message a user sees should make sense to someone

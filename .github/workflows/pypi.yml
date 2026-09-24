@@ -1,17 +1,81 @@
-name: Publish to PyPI
+name: Release
 
-# When a release is published on GitHub, build MeshRight and upload it to
-# PyPI, so anyone can install it with `pip install meshright`.
-# Uses PyPI "trusted publishing": no password or token is stored anywhere.
-# One-time setup on pypi.org: add a (pending) trusted publisher with owner
-# Huzy85, repository MeshRight, workflow pypi.yml and environment pypi.
+# Releases happen by themselves: when the version number in
+# src/meshright/__init__.py changes on main (and there is no release for it
+# yet), this builds the Windows, macOS and Linux apps, publishes a GitHub
+# release with them (notes taken from CHANGELOG.md), and uploads MeshRight to
+# PyPI. To release: add a section to CHANGELOG.md and raise the version.
+#
+# A release published by hand on GitHub still uploads to PyPI, as before.
+#
+# PyPI "trusted publishing" is set up for this file name (pypi.yml) and the
+# environment "pypi": no password or token is stored anywhere.
 
 on:
+  push:
+    branches: [main]
+    paths: ["src/meshright/__init__.py"]
   release:
     types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      new: ${{ steps.version.outputs.new }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        run: |
+          version=$(python3 -c "import re; print(re.search(r'__version__ = \"(.+?)\"', open('src/meshright/__init__.py').read()).group(1))")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "release" ] || git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  apps:
+    needs: check
+    if: needs.check.outputs.new == 'true'
+    uses: ./.github/workflows/release.yml
+
+  github-release:
+    needs: [check, apps]
+    if: needs.check.outputs.new == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release notes from the changelog
+        run: |
+          awk -v v="${{ needs.check.outputs.version }}" '
+            /^## / { if (found) exit; if (index($0, "## " v) == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          printf '\nDownload the app for your computer below and double-click it; MeshRight opens in your browser. The apps are not signed yet: on Windows choose More info, then Run anyway; on a Mac, right-click and choose Open the first time. Or install with pip install meshright.\n' >> notes.md
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: MeshRight-*
+          path: apps
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check.outputs.version }}
+          name: MeshRight ${{ needs.check.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          body_path: notes.md
+          files: apps/*
+
   build:
+    needs: check
+    if: needs.check.outputs.new == 'true' || github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +90,8 @@ jobs:
           path: dist/
 
   publish:
-    needs: build
+    needs: [check, build]
+    if: needs.check.outputs.new == 'true' || github.event_name == 'release'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
