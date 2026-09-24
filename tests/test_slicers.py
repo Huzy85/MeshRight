@@ -1,4 +1,5 @@
 import subprocess
+import sys
 
 import pytest
 import trimesh
@@ -31,6 +32,7 @@ def test_found_on_mac(tmp_path):
     assert command == ["open", "-a", str(tmp_path / "Applications" / "OrcaSlicer.app")]
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="finds programs the Linux way (PATH and file permissions)")
 def test_found_on_linux(tmp_path):
     exe = tmp_path / "bin" / "prusa-slicer"
     exe.parent.mkdir()
