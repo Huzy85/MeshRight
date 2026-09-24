@@ -32,3 +32,16 @@ def test_noisy_area_is_found():
 def test_empty():
     levels, share = quality.face_levels(trimesh.Trimesh())
     assert len(levels) == 0 and share == 0
+
+
+def test_changes_show_where_the_surface_moved():
+    ball = trimesh.creation.icosphere(subdivisions=4, radius=20)
+    dented = ball.copy()
+    top = dented.vertices[:, 2] > 17
+    dented.vertices[top] -= [0, 0, 1.5]
+    levels, largest, moved = quality.change_levels(ball, dented)
+    centres = dented.triangles_center[:, 2]
+    assert levels[centres > 17].mean() > 100 and levels[centres < 0].max() < 20
+    assert 1.0 < largest < 1.6 and 0.01 < moved < 0.2
+    same, largest, moved = quality.change_levels(ball, ball.copy())
+    assert same.max() < 20 and moved == 0

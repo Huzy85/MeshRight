@@ -60,6 +60,31 @@ def vertex_roughness(mesh: trimesh.Trimesh) -> np.ndarray:
     return rough
 
 
+FULL_CHANGE_MM = 2.0  # moved this far or more shows fully red
+
+
+def change_levels(before: trimesh.Trimesh, after: trimesh.Trimesh, samples: int = 200_000) -> tuple[np.ndarray, float, float]:
+    """How far each triangle of ``after`` lies from the surface of ``before``:
+    0..255 per triangle (green to red), the largest distance in mm, and the
+    share of the surface that moved more than 0.1 mm. Distances are measured
+    to dense points spread over ``before``, which is accurate to a fraction
+    of their spacing."""
+    from scipy.spatial import cKDTree
+
+    if len(after.faces) == 0 or len(before.faces) == 0:
+        return np.zeros(len(after.faces), dtype=np.uint8), 0.0, 0.0
+    points, _ = trimesh.sample.sample_surface_even(before, samples, seed=0)
+    points = np.vstack([points, before.vertices])
+    spacing = np.sqrt(before.area / max(len(points), 1))
+    distance, _ = cKDTree(points).query(after.vertices)
+    distance = np.maximum(distance - spacing / 2, 0.0)  # sampling gaps are not movement
+    per_face = distance[after.faces].max(axis=1)
+    area = after.area_faces
+    moved = float(area[per_face > 0.1].sum() / area.sum()) if area.sum() > 0 else 0.0
+    levels = np.round(np.clip(per_face / FULL_CHANGE_MM, 0, 1) * 255).astype(np.uint8)
+    return levels, float(per_face.max()), moved
+
+
 def face_levels(mesh: trimesh.Trimesh) -> tuple[np.ndarray, float]:
     """Per triangle 0..255 (clean to rough) and the share of the surface that
     is rough."""
