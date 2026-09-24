@@ -40,15 +40,32 @@ packaging/build.sh          # the app appears in dist/
 
 | Path | What it is |
 | --- | --- |
-| `src/meshright/analysis.py` | Loads meshes, finds problems, computes the score |
+| `src/meshright/actions.py` | **Every change MeshRight can make**, as named actions with checked inputs and a plain-English receipt |
+| `src/meshright/analysis.py` | Loads meshes (all file types, units, colours), finds problems, computes the score |
 | `src/meshright/formats.py` | Extra file readers and unit/orientation fixes per format |
-| `src/meshright/actions.py` | Every change MeshRight can make, as named actions with checked inputs |
 | `src/meshright/document.py` | An open model and its undo history |
 | `src/meshright/server.py` | Local web server and API, including protection against other websites |
-| `src/meshright/cli.py` | The `meshright` command |
+| `src/meshright/cli.py` | The `meshright` command (`serve`, `check`, `fix`) |
+| `src/meshright/repair.py` | Clean up, hole filling, Make Solid, thicken, hollow, reduce detail, repair presets |
+| `src/meshright/intersections.py` | Finds triangles that cut through each other |
+| `src/meshright/orient.py`, `orientation.py` | Which way is up, lay flat, flat bottom or base, best way to print |
+| `src/meshright/cut.py` | Cut in two, split to fit, pins, numbered parts |
+| `src/meshright/combine.py`, `merge.py` | Combine models, merge scans |
+| `src/meshright/bust.py`, `sculpt.py`, `thickness.py` | Make a bust, sculpt brushes, wall check |
+| `src/meshright/quality.py` | Rough spots and what-changed heatmaps |
+| `src/meshright/colour.py` | Keeps colours of colour scans through every change |
+| `src/meshright/pointcloud.py` | Point clouds to surfaces |
+| `src/meshright/batch.py`, `project.py`, `settings.py` | Batch mode, .meshright projects, printer settings |
+| `src/meshright/slicers.py`, `updates.py`, `samples.py` | Open in slicer, the version check, sample models |
 | `src/meshright/web/` | Browser app (plain HTML, CSS and JavaScript, no build step) |
 | `src/meshright/web/vendor/` | Bundled three.js, so the app works offline |
+| `packaging/`, `.github/workflows/` | One-file apps, tests, releases and PyPI publishing |
 | `tests/` | Tests. Test meshes are generated in code |
+
+To add a feature: write the geometry, add an action in `actions.py`, add a
+test, then a button and (if needed) a sheet in `web/index.html` and
+`web/app.js`. New `POST /api/doc/{id}/...` routes in `server.py` must come
+before the catch-all route for undo and redo.
 
 ## Guidelines
 
@@ -57,13 +74,16 @@ packaging/build.sh          # the app appears in dist/
   for printing.
 - **No settings unless they are unavoidable.** Good defaults beat options.
 - **Local and offline.** Nothing may send a user's files or data to a remote
-  service. Optional online features must be opt-in and bring-your-own-key.
+  service. The only request MeshRight makes is a once-a-day check of the latest
+  version number on GitHub, which can be switched off. Any future online
+  feature (such as an AI assistant) must be opt-in and bring-your-own-key.
 - **Never commit secrets or personal data.** No API keys, tokens, passwords,
   email addresses or personal file paths in code, tests, issues or commits.
   Keep local settings in a `.env` file; it is ignored by git.
 - **Every change is an action.** New tools go in `actions.py` with a clear
   title, description and checked inputs, and return a plain-English receipt.
-  The buttons, batch mode and the optional AI assistant all use this list.
+  The buttons, batch mode and the command line all use this list, and a
+  future optional AI assistant would too.
 - **Add a test** for every new check or repair. Build the test mesh in code
   (see `tests/conftest.py`) rather than adding binary files.
 - **Keep pull requests small** and focused on one thing.

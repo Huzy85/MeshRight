@@ -132,6 +132,10 @@ meshright fix scans/
 meshright fix scans/ --format stl --best-bottom
 ```
 
+## What's new
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## Contributing
 
 Contributions are welcome, from bug reports with example files to new repair
