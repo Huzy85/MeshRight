@@ -1,0 +1,39 @@
+name: Publish to PyPI
+
+# When a release is published on GitHub, build MeshRight and upload it to
+# PyPI, so anyone can install it with `pip install meshright`.
+# Uses PyPI "trusted publishing": no password or token is stored anywhere.
+# One-time setup on pypi.org: add a (pending) trusted publisher with owner
+# Huzy85, repository MeshRight, workflow pypi.yml and environment pypi.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-package
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-package
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
