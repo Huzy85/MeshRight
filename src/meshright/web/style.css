@@ -168,6 +168,7 @@ select {
 #cut-height { width: 140px; accent-color: var(--accent); margin: 0 10px 0 4px; }
 #cutter-position { width: 160px; accent-color: var(--accent); }
 .inline-field { display: inline-flex; align-items: center; gap: 6px; color: var(--secondary); font-size: 13px; white-space: nowrap; }
+.inline-field input.mini { width: 56px; padding: 5px 6px; font: 500 13px var(--font); text-align: right; }
 .inline-field input { width: 64px; font: 500 13px var(--font); color: var(--text); border: 0; border-radius: 7px; background: var(--fill); padding: 5px 8px; }
 #measure-label {
   position: absolute;

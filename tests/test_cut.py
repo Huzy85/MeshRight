@@ -110,3 +110,28 @@ def test_a_row_of_parts_is_numbered_along_the_row():
 def test_numbers_can_be_left_off():
     _, receipt = run_action(block(), "cut_in_two", {"axis": "z", "position_mm": 20, "numbers": False})
     assert "numbered" not in receipt and "Assembly" not in receipt
+
+
+def test_pin_clearance_sets_the_hole_size():
+    # Looser play: wider holes, so the halves lose a little more volume.
+    tight, receipt_tight = run_action(block(), "cut_in_two", {"axis": "x", "position_mm": 10, "clearance_mm": 0.1})
+    loose, receipt_loose = run_action(block(), "cut_in_two", {"axis": "x", "position_mm": 10, "clearance_mm": 0.6})
+    halves = lambda m: sum(p.volume for p in parts_of(m) if p.volume > 1000)  # noqa: E731
+    assert halves(loose) < halves(tight)
+    assert "pins 4 mm, holes 4.1 mm, 0.1 mm of play" in receipt_tight
+    assert "pins 4 mm, holes 4.6 mm, 0.6 mm of play" in receipt_loose
+
+
+def test_pin_clearance_must_be_sensible():
+    with pytest.raises(ActionError):
+        run_action(block(), "cut_in_two", {"axis": "x", "position_mm": 10, "clearance_mm": 2})
+
+
+def test_split_fix_carries_the_printer_clearance():
+    printer = settings.Printer("Bambu Lab A1", 256, 256, 256, clearance_mm=0.5)
+    big = trimesh.creation.box(extents=(400, 50, 50))
+    issue = next(i for i in analyze(big, printer=printer).issues if i.code == "too_big")
+    split = next(f for f in issue.fixes if f["action"] == "split_to_fit")
+    assert split["params"]["clearance_mm"] == 0.5
+    _, receipt = run_action(big, split["action"], split["params"])
+    assert "0.5 mm of play" in receipt

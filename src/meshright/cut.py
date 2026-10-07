@@ -249,12 +249,13 @@ def _lay_out(parts: list[trimesh.Trimesh]) -> trimesh.Trimesh:
 
 
 def cut(mesh: trimesh.Trimesh, plan: dict[int, list[float]], pins: bool = True, pin_mm: float = 4.0,
-        numbers: bool = True) -> tuple[trimesh.Trimesh, int, int, list[tuple[int, int]] | None]:
+        numbers: bool = True, clearance_mm: float = PIN_CLEARANCE_MM) -> tuple[trimesh.Trimesh, int, int, list[tuple[int, int]] | None]:
     """Cut along the planned planes ({axis: [positions]}). Returns the laid
     out parts (with pins to print), the number of parts and of pins, and
-    which numbered parts join (None when the parts are not numbered)."""
+    which numbered parts join (None when the parts are not numbered).
+    ``clearance_mm`` is the play between each pin and its hole."""
     solid = _to_manifold(mesh)
-    radius = pin_mm / 2 + PIN_CLEARANCE_MM / 2
+    radius = pin_mm / 2 + clearance_mm / 2
     depth = max(3.0, 1.5 * pin_mm)
 
     hole_count = 0
@@ -314,16 +315,21 @@ def cut(mesh: trimesh.Trimesh, plan: dict[int, list[float]], pins: bool = True, 
     return _lay_out(parts + extra), len(parts), len(extra), joins
 
 
+def _pins_text(pin_count: int, pin_mm: float, clearance_mm: float) -> str:
+    return (f", with {pin_count} pin holes and {pin_count} pins to print "
+            f"(pins {pin_mm:.4g} mm, holes {pin_mm + clearance_mm:.4g} mm, {clearance_mm:.4g} mm of play)")
+
+
 def cut_in_two(mesh: trimesh.Trimesh, axis: str, position: float, pins: bool, pin_mm: float,
-               numbers: bool = True) -> tuple[trimesh.Trimesh, str]:
+               numbers: bool = True, clearance_mm: float = PIN_CLEARANCE_MM) -> tuple[trimesh.Trimesh, str]:
     a = AXES[axis]
     low, high = mesh.bounds[0][a], mesh.bounds[1][a]
     if not low < position < high:
         raise CutError(f"The cut must be inside the model: between {low:.4g} and {high:.4g} mm along {axis.upper()}.")
-    result, parts, pin_count, joins = cut(mesh, {a: [position]}, pins, pin_mm, numbers)
+    result, parts, pin_count, joins = cut(mesh, {a: [position]}, pins, pin_mm, numbers, clearance_mm)
     receipt = f"Cut into {parts} {'numbered ' if joins is not None else ''}parts along {axis.upper()} at {position:.4g} mm"
     if pin_count:
-        receipt += f", with {pin_count} pin holes and {pin_count} pins to print"
+        receipt += _pins_text(pin_count, pin_mm, clearance_mm)
     if joins:
         receipt += f". Assembly: {_joins_text(joins)}"
     return result, receipt
@@ -343,17 +349,17 @@ def split_plan(mesh: trimesh.Trimesh, bed: tuple[float, float, float]) -> dict[i
 
 
 def split_to_fit(mesh: trimesh.Trimesh, bed: tuple[float, float, float], pins: bool, pin_mm: float,
-                 numbers: bool = True) -> tuple[trimesh.Trimesh, str]:
+                 numbers: bool = True, clearance_mm: float = PIN_CLEARANCE_MM) -> tuple[trimesh.Trimesh, str]:
     plan = split_plan(mesh, bed)
     if not plan:
         raise CutError("It already fits the printer, so there is nothing to split.")
     if sum(len(p) + 1 for p in plan.values()) > 40:
         raise CutError("That would make too many parts. Shrink the model a little first.")
-    result, parts, pin_count, joins = cut(mesh, plan, pins, pin_mm, numbers)
+    result, parts, pin_count, joins = cut(mesh, plan, pins, pin_mm, numbers, clearance_mm)
     names = " and ".join("XYZ"[a] for a in plan)
     receipt = f"Split into {parts} {'numbered ' if joins is not None else ''}parts along {names} so each fits the printer"
     if pin_count:
-        receipt += f", with {pin_count} pin holes and {pin_count} pins to print"
+        receipt += _pins_text(pin_count, pin_mm, clearance_mm)
     if joins:
         receipt += f". Assembly: {_joins_text(joins)}"
     return result, receipt

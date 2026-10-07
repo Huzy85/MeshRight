@@ -22,6 +22,11 @@ def test_save_and_load():
     assert chosen and printer == MINI
 
 
+def test_old_settings_without_clearance_still_load():
+    data = {k: v for k, v in MINI.to_dict().items() if k != "clearance_mm"}
+    assert settings.Printer.from_dict(data).clearance_mm == 0.3
+
+
 def test_every_preset_is_valid():
     for preset in settings.PRESETS:
         preset.validate()
@@ -29,7 +34,7 @@ def test_every_preset_is_valid():
 
 @pytest.mark.parametrize(
     "change",
-    [{"bed_x": 0}, {"bed_z": 99999}, {"nozzle_mm": 5}, {"technology": "laser"}, {"material": "Wood"}],
+    [{"bed_x": 0}, {"bed_z": 99999}, {"nozzle_mm": 5}, {"technology": "laser"}, {"material": "Wood"}, {"clearance_mm": 1}],
 )
 def test_bad_settings_are_refused(change):
     with pytest.raises(ValueError):

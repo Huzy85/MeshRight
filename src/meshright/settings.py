@@ -32,6 +32,9 @@ class Printer:
     nozzle_mm: float = 0.4
     technology: str = "filament"  # "filament" or "resin"
     material: str = "PLA"
+    # Gap between a pin and its hole, so cut parts push together without
+    # force. Printers differ: 0.3 mm suits most, a tight one wants more.
+    clearance_mm: float = 0.3
 
     @property
     def density(self) -> float:
@@ -61,6 +64,9 @@ class Printer:
             raise ValueError("The printer type must be filament or resin.")
         if self.material not in MATERIALS:
             raise ValueError(f"The material must be one of: {', '.join(MATERIALS)}.")
+        self.clearance_mm = float(self.clearance_mm)
+        if not 0.1 <= self.clearance_mm <= 0.6:
+            raise ValueError("The pin clearance must be between 0.1 and 0.6 mm.")
         self.name = str(self.name)[:80] or "My printer"
 
 

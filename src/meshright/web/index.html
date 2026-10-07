@@ -121,6 +121,7 @@
         <input type="range" id="cutter-position" min="1" max="999" value="500" aria-label="Where to cut">
         <label class="toggle"><input type="checkbox" id="cutter-pins" checked>Pins</label>
         <label class="toggle" title="Engrave each part's number on a hidden cut face, in assembly order"><input type="checkbox" id="cutter-numbers" checked>Numbers</label>
+        <label class="inline-field" title="Play between each pin and its hole. 0.3 mm suits most printers: more if the parts will not push together, less if they wobble. Remembered with your printer.">Fit <input type="number" id="cutter-clearance" class="mini" min="0.1" max="0.6" step="0.05" value="0.3" aria-label="Pin clearance in mm"> mm</label>
         <button type="button" class="primary" id="cutter-do">Cut</button>
         <button type="button" id="cutter-cancel">Cancel</button>
       </div>
@@ -366,6 +367,9 @@
       <label class="stack" for="material">Material
         <select id="material"></select>
       </label>
+      <div class="fields one">
+        <label class="field" title="Play between each pin and its hole when a model is cut into parts. 0.3 mm suits most printers: more if parts will not push together, less if they wobble."><span>Pin fit</span><input id="clearance" type="number" min="0.1" max="0.6" step="0.05" required><em>mm</em></label>
+      </div>
       <p class="error-line" id="printer-error" hidden></p>
       <div class="dialog-actions">
         <button type="submit" value="save" class="primary">Save</button>
