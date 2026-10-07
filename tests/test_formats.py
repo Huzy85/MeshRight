@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import trimesh
 
-from meshright.analysis import analyze, analyze_file, load_mesh
+from meshright.analysis import MeshLoadError, analyze, analyze_file, load_mesh
 
 from .conftest import save
 
@@ -158,3 +158,98 @@ def test_scanner_survives_changes_and_project_files(cube, tmp_path):
     saved.write_bytes(project.save(doc))
     again = project.load(saved)
     assert again.mesh.metadata["scanner"]["name"] == "Artec"
+
+
+# ---------------------------------------------------------------- USD, E57, FBX
+
+USDA = """#usda 1.0
+(
+    metersPerUnit = 0.01
+    upAxis = "Y"
+)
+
+def Xform "root"
+{
+    float3 xformOp:scale = (2, 2, 2)
+    double3 xformOp:translate = (1, 2, 3)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+    def Mesh "cube" (
+        kind = "component"
+    )
+    {
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+        point3f[] points = [(-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1), (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)]
+        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)]
+    }
+}
+"""
+
+
+def test_usda_text_is_read_in_mm_z_up(tmp_path):
+    # Centimetre scene, Y up: a 2-unit cube scaled by 2 and moved by (1, 2, 3)
+    # is 40 mm across, with the USD Y (up) axis now Z.
+    path = tmp_path / "scan.usda"
+    path.write_text(USDA, encoding="utf-8")
+    mesh = load_mesh(path)
+    assert mesh.is_watertight and len(mesh.faces) == 12
+    assert np.allclose(mesh.bounds, [[-10, -50, 0], [30, -10, 40]])
+
+
+def test_usdz_with_text_layer(tmp_path):
+    path = tmp_path / "scan.usdz"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("scene.usda", USDA)
+        zf.writestr("0/texture.png", b"not really")
+    assert np.allclose(load_mesh(path).extents, [40, 40, 40])
+
+
+def test_binary_usd_explains_what_is_needed_or_reads_it(tmp_path):
+    pytest.importorskip("pxr")
+    from pxr import Sdf, Usd, UsdUtils
+
+    path = tmp_path / "scan.usda"
+    path.write_text(USDA, encoding="utf-8")
+    stage = Usd.Stage.Open(str(path))  # kept alive: the layer is a weak pointer into it
+    stage.GetRootLayer().Export(str(tmp_path / "scan.usdc"))
+    UsdUtils.CreateNewUsdzPackage(Sdf.AssetPath(str(tmp_path / "scan.usdc")), str(tmp_path / "packed.usdz"))
+    assert np.allclose(load_mesh(tmp_path / "scan.usdc").extents, [40, 40, 40])
+    assert np.allclose(load_mesh(tmp_path / "packed.usdz").extents, [40, 40, 40])
+
+
+def test_binary_usd_message_without_the_reader(tmp_path, monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_pxr(name, *args, **kwargs):
+        if name == "pxr" or name.startswith("pxr."):
+            raise ImportError("no pxr")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_pxr)
+    path = tmp_path / "scan.usdc"
+    path.write_bytes(b"PXR-USDC" + bytes(64))
+    with pytest.raises(MeshLoadError, match="meshright\\[usd\\]"):
+        load_mesh(path)
+
+
+def test_e57_points_become_a_surface(tmp_path):
+    pye57 = pytest.importorskip("pye57")
+    # A 20 mm sphere of points, stored in metres as E57 is.
+    points = trimesh.creation.icosphere(4, radius=0.01).vertices
+    writer = pye57.E57(str(tmp_path / "scan.e57"), mode="w")
+    writer.write_scan_raw({"cartesianX": points[:, 0], "cartesianY": points[:, 1], "cartesianZ": points[:, 2]})
+    writer.close()
+    mesh = load_mesh(tmp_path / "scan.e57")
+    assert mesh.is_watertight
+    assert 15 < mesh.extents.max() < 30  # the surface sits a little outside the points
+    assert "points" in mesh.metadata["notice"]
+
+
+def test_fbx_says_what_to_export_instead(tmp_path):
+    path = tmp_path / "scan.fbx"
+    path.write_bytes(b"Kaydara FBX Binary  \x00")
+    with pytest.raises(MeshLoadError, match="OBJ, GLB or STL"):
+        load_mesh(path)

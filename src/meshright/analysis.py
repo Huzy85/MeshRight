@@ -14,7 +14,12 @@ import trimesh
 
 from . import formats
 
-SUPPORTED_EXTENSIONS = (".stl", ".obj", ".ply", ".3mf", ".glb", ".gltf", ".off", ".amf", ".xyz", ".asc", ".pts")
+SUPPORTED_EXTENSIONS = (
+    ".stl", ".obj", ".ply", ".3mf", ".glb", ".gltf", ".off", ".amf",
+    ".usd", ".usda", ".usdc", ".usdz",  # USD: text read here, binary with the optional usd-core
+    ".xyz", ".asc", ".pts", ".e57",  # point clouds (E57 with the optional pye57)
+    ".fbx",  # not readable: opened so the user gets told what to export instead
+)
 
 # Highlight data sent to the viewer is capped so huge broken scans stay usable.
 MAX_HIGHLIGHT_SEGMENTS = 100_000
@@ -104,6 +109,13 @@ def load_mesh(path: str | Path, file_type: str | None = None) -> trimesh.Trimesh
     try:
         if file_type == "amf":
             vertices, faces = formats.read_amf(path)
+        elif file_type == "fbx":
+            raise MeshLoadError(formats.FBX_HELP)
+        elif f".{file_type}" in formats.USD_EXTENSIONS:
+            vertices, faces = formats.read_usd(path)
+        elif file_type == "e57":
+            points = formats.read_e57(path)
+            vertices, faces = points, np.zeros((0, 3), dtype=np.int64)
         elif f".{file_type}" in pointcloud.POINT_EXTENSIONS:
             points = pointcloud.read_text_points(path)
             vertices, faces = points, np.zeros((0, 3), dtype=np.int64)
