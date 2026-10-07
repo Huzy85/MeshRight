@@ -39,6 +39,8 @@ dev = ["pytest>=8", "httpx>=0.27"]
 # and E57 laser-scanner files. Text USD (usda) needs nothing extra.
 usd = ["usd-core>=24.0"]
 e57 = ["pye57>=0.4"]
+# `meshright mcp`: MeshRight's tools for AI apps (Claude, Cursor and others).
+mcp = ["mcp>=2.3"]
 
 [project.scripts]
 meshright = "meshright.cli:main"

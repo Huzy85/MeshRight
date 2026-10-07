@@ -9,8 +9,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from . import __version__
-from . import settings
+from . import __version__, settings
 from .analysis import SUPPORTED_EXTENSIONS, MeshLoadError, analyze, load_mesh
 
 SEVERITY_LABELS = {"error": "ERROR  ", "warning": "WARNING", "info": "INFO   "}
@@ -102,6 +101,19 @@ def _serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _mcp(args: argparse.Namespace) -> int:
+    from . import mcp_server
+
+    if args.show_config:
+        print(mcp_server.register_hint())
+        return 0
+    try:
+        return mcp_server.run()
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="meshright", description=__doc__)
     parser.add_argument("--version", action="version", version=f"meshright {__version__}")
@@ -130,6 +142,10 @@ def main(argv: list[str] | None = None) -> int:
     fix.add_argument("--no-bed", action="store_true", help="do not centre the models on the bed")
     fix.add_argument("--no-fit", action="store_true", help="do not shrink models that are too big for your printer")
     fix.set_defaults(func=_fix)
+
+    mcp = sub.add_parser("mcp", help="serve MeshRight's tools to AI apps over MCP (stdin/stdout)")
+    mcp.add_argument("--show-config", action="store_true", help="print the JSON to paste into an AI app's MCP settings")
+    mcp.set_defaults(func=_mcp)
 
     args = parser.parse_args(argv)
     if not args.command:
