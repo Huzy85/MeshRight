@@ -362,7 +362,7 @@ def _fit_issues(mesh: trimesh.Trimesh, printer) -> list[Issue]:
         fixes=[
             {"label": f"Shrink to fit (×{shrink:g})", "action": "scale", "params": {"factor": shrink}},
             {"label": "Split into parts that fit", "action": "split_to_fit",
-             "params": {"bed_x": bx, "bed_y": by, "bed_z": bz}},
+             "params": {"bed_x": bx, "bed_y": by, "bed_z": bz, "clearance_mm": printer.clearance_mm}},
         ],
     )]
 

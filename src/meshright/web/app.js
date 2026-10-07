@@ -519,6 +519,7 @@ function fillPrinterFields(p) {
   $('bed-z').value = p.bed_z;
   $('nozzle').value = p.nozzle_mm;
   $('material').value = p.material;
+  $('clearance').value = p.clearance_mm ?? 0.3;
 }
 
 function openPrinter() {
@@ -555,6 +556,7 @@ $('printer-form').addEventListener('submit', async (e) => {
     bed_y: Number($('bed-y').value),
     bed_z: Number($('bed-z').value),
     nozzle_mm: Number($('nozzle').value),
+    clearance_mm: Number($('clearance').value),
     material,
     technology: material === 'Resin' ? 'resin' : (base.technology === 'resin' ? 'filament' : base.technology),
   };
@@ -1481,6 +1483,8 @@ function startCutter() {
   if (!docId || !content || busy) return;
   exitModes();
   $('cutter-bar').hidden = false;
+  // The pin fit is remembered with the printer; the bar can override it for one cut.
+  $('cutter-clearance').value = printer?.clearance_mm ?? 0.3;
   $('status').hidden = true;
   placeCutter();
 }
@@ -1505,7 +1509,11 @@ for (const button of document.querySelectorAll('[data-cut-axis]')) {
   });
 }
 $('cutter-do').addEventListener('click', () => {
-  const params = { axis: cutterAxis, position_mm: cutterPosition(), pins: $('cutter-pins').checked, numbers: $('cutter-numbers').checked };
+  const clearance = Math.min(0.6, Math.max(0.1, Number($('cutter-clearance').value) || 0.3));
+  const params = {
+    axis: cutterAxis, position_mm: cutterPosition(), pins: $('cutter-pins').checked,
+    numbers: $('cutter-numbers').checked, clearance_mm: clearance,
+  };
   stopCutter();
   runAction('cut_in_two', params);
 });
