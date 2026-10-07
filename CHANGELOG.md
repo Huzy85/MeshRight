@@ -1,5 +1,27 @@
 # Changes
 
+## 0.2.0
+
+- **Print in colours**: a new Export item, "3MF in colours", groups a colour
+  scan into 2 to 8 print colours and writes a 3MF painted for Bambu Studio,
+  OrcaSlicer and PrusaSlicer (standard material colours for other viewers).
+- **Works with AI apps**: `meshright mcp` is an MCP server offering check,
+  Clean up, every action, Print in colours and your printer to Claude Desktop, Claude Code,
+  Cursor and the like. `meshright mcp --show-config` prints the settings to
+  paste. Install with `pip install "meshright[mcp]"`.
+- **More files open**: USD, USDA, USDC and USDZ (iPhone Object Capture) and
+  E57 scanner point clouds. Binary USD needs `pip install "meshright[usd]"`,
+  E57 needs `pip install "meshright[e57]"`. FBX files get a message saying
+  what to export instead.
+- **Scanner recognised**: the check says which scanner app made a file
+  (Revopoint, Creality, Shining 3D, Polycam, Scaniverse, KIRI, Luma and
+  others) and what its scans usually need.
+- **Pin clearance** is a printer setting (0.1 to 0.6 mm) and every cut
+  receipt says which clearance it used.
+- For contributors: `tools/check_library.py` runs the batch fix over public
+  test models and writes a results table; releases fail when a packaged app
+  grows past 180 MB.
+
 ## 0.1.2
 
 - **Show what changed**: a switch under History colours the model green where

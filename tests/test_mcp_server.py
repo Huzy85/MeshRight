@@ -63,6 +63,21 @@ def test_fix_model_runs_the_cleanup(tmp_path):
     assert trimesh.load(result["output"], force="mesh").is_watertight
 
 
+def test_export_colours_writes_a_painted_3mf(tmp_path):
+    from .test_colour import two_tone_ball
+
+    path = tmp_path / "ball.ply"
+    two_tone_ball().export(path)
+    result = mcp_server.export_colours(str(path), colours=3)
+    assert "error" not in result, result
+    assert result["output"].endswith("ball-meshright-colours.3mf") and (tmp_path / "ball-meshright-colours.3mf").exists()
+    assert len(result["colours"]) == 2 and all("colour" in c and "share" in c for c in result["colours"])
+    plain = tmp_path / "box.stl"
+    trimesh.creation.box().export(plain)
+    assert "no colours" in mcp_server.export_colours(str(plain))["error"]
+    assert "between 2 and 8" in mcp_server.export_colours(str(path), colours=9)["error"]
+
+
 def test_printer_has_the_clearance(monkeypatch, tmp_path):
     monkeypatch.setenv("MESHRIGHT_CONFIG_DIR", str(tmp_path))
     info = mcp_server.printer()
