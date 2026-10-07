@@ -42,6 +42,7 @@
         <div class="menu-items" role="menu">
           <button type="button" role="menuitem" data-format="stl">STL<small>Works in every slicer</small></button>
           <button type="button" role="menuitem" data-format="3mf">3MF<small>Bambu Studio, PrusaSlicer, OrcaSlicer</small></button>
+          <button type="button" role="menuitem" id="export-colours" hidden>3MF in colours<small>Painted for a multi-colour printer</small></button>
           <button type="button" role="menuitem" data-format="obj">OBJ<small>Other 3D apps; keeps colours</small></button>
           <button type="button" role="menuitem" data-format="ply">PLY<small>Keeps colours; for other 3D apps</small></button>
           <button type="button" role="menuitem" id="save-project">MeshRight project<small>Save your work to carry on later</small></button>
@@ -466,6 +467,20 @@
     </form>
   </dialog>
 
+  <dialog id="colours-dialog" aria-labelledby="colours-title">
+    <form method="dialog">
+      <h2 id="colours-title">3MF in colours</h2>
+      <p class="sub">Groups the scan's colours into a few print colours and paints every triangle, so Bambu Studio, PrusaSlicer and OrcaSlicer open it ready for a multi-colour printer. In the slicer, give each colour a filament.</p>
+      <div class="fields one">
+        <label class="field"><span>Print colours</span><input id="colours-count" type="number" min="2" max="8" step="1" value="4"><em>2 to 8</em></label>
+      </div>
+      <p class="hint">Fewer colours give cleaner areas. Four suits most scans; use as many as your printer has filaments.</p>
+      <div class="dialog-actions">
+        <button type="submit" value="apply" class="primary">Export</button>
+        <button type="submit" value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="hollow-dialog" aria-labelledby="hollow-title">
     <form method="dialog">
       <h2 id="hollow-title">Hollow for resin</h2>

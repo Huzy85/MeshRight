@@ -635,6 +635,31 @@ def export(doc_id: str, format: str = "stl") -> Response:
     )
 
 
+@app.get("/api/doc/{doc_id}/export-colours")
+async def export_colours(doc_id: str, colours: int = 4) -> Response:
+    """A 3MF painted for multi-colour printing (Bambu Studio, PrusaSlicer,
+    OrcaSlicer), from the model's own colours grouped into ``colours``
+    print colours. The X-Colours header lists them with their share."""
+    import json
+
+    from . import colour_export
+
+    doc = _get(doc_id)
+    stem = re.sub(r"[^\w\-. ]", "_", Path(doc.name).stem).strip() or "model"
+    try:
+        data, summary = await run_in_threadpool(colour_export.export, doc.snapshot(), colours, stem)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type=EXPORT_FORMATS["3mf"],
+        headers={
+            "Content-Disposition": f'attachment; filename="{stem}-meshright-colours.3mf"',
+            "X-Colours": json.dumps(summary),
+        },
+    )
+
+
 @app.get("/api/doc/{doc_id}/project")
 def save_project(doc_id: str) -> Response:
     """The model, its original and its steps as a .meshright file."""
