@@ -642,6 +642,7 @@ async function showState(state, { keepView }) {
   const model = await fetchModel(state.doc_id);
   // A model with colours shows them, switched on the first time it is seen.
   $('colour-toggle').hidden = !state.has_colour;
+  $('export-colours').hidden = !state.has_colour;
   if (state.has_colour && colouredDoc !== state.doc_id) $('toggle-colour').checked = true;
   if (state.has_colour) colouredDoc = state.doc_id;
   if (!state.has_colour) $('toggle-colour').checked = false;
@@ -2409,6 +2410,32 @@ function exportAs(format) {
   showStatus(`Saved as ${format.toUpperCase()}. Check your Downloads folder.`);
 }
 
+async function exportColours(count) {
+  showStatus('Grouping the colours…', 'busy');
+  try {
+    const res = await fetch(`api/doc/${docId}/export-colours?colours=${count}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `Export failed (${res.status}).`);
+    }
+    const blob = await res.blob();
+    const name = (res.headers.get('content-disposition') || '').match(/filename="([^"]+)"/);
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = name ? name[1] : 'model-meshright-colours.3mf';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+    let colours = [];
+    try { colours = JSON.parse(res.headers.get('x-colours') || '[]'); } catch { colours = []; }
+    const list = colours.map((c) => `${c.colour} (${Math.round(c.share * 100)}%)`).join(', ');
+    showStatus(`Saved with ${colours.length} colours: ${list}. In the slicer, give each one a filament.`);
+  } catch (err) {
+    showStatus(err.message, 'error');
+  }
+}
+
 // ---------------------------------------------------------------- controls
 
 function openFiles(files) {
@@ -2513,6 +2540,17 @@ $('redo').addEventListener('click', redo);
 $('revert').addEventListener('click', () => change('revert', null, () => 'Back to the original file'));
 
 $('save-project').addEventListener('click', saveProject);
+$('export-colours').addEventListener('click', () => {
+  $('export-menu').open = false;
+  if (!docId || busy) return;
+  $('colours-dialog').showModal();
+});
+$('colours-dialog').addEventListener('close', () => {
+  if ($('colours-dialog').returnValue === 'apply') {
+    exportColours(Math.min(8, Math.max(2, Math.round(Number($('colours-count').value) || 4))));
+  }
+  $('colours-dialog').returnValue = '';
+});
 for (const button of document.querySelectorAll('#export-menu [data-format]')) {
   button.addEventListener('click', () => exportAs(button.dataset.format));
 }
