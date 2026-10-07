@@ -135,6 +135,27 @@ def fix_model(path: str, out: str | None = None, preset: str = "balanced", solid
     }
 
 
+def export_colours(path: str, out: str | None = None, colours: int = 4) -> dict:
+    """Write a 3MF painted for a multi-colour printer from a colour scan
+    (PLY, OBJ with texture, GLB...). The scan's colours are grouped into
+    2 to 8 print colours and every triangle is painted, so Bambu Studio,
+    OrcaSlicer and PrusaSlicer open it ready to print. Returns the output
+    file and each print colour with the share of the surface it covers."""
+    from . import colour_export
+
+    try:
+        source = _source(path)
+        target = _target(source, out, "3mf")
+        if not out:
+            target = target.with_name(f"{source.stem}-meshright-colours.3mf")
+        data, summary = colour_export.export(load_mesh(source), int(colours), source.stem)
+    except (MeshLoadError, OSError, ValueError) as exc:
+        return {"file": path, "error": str(exc)}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    return {"file": str(source), "output": str(target), "colours": summary}
+
+
 def printer() -> dict:
     """The printer MeshRight is set up for (bed size, nozzle, material, pin
     clearance), or the defaults if none has been chosen yet."""
@@ -142,7 +163,7 @@ def printer() -> dict:
     return {"chosen": chosen, **current.to_dict()}
 
 
-TOOLS = (check_model, list_actions, apply_actions, fix_model, printer)
+TOOLS = (check_model, list_actions, apply_actions, fix_model, export_colours, printer)
 
 
 def build_server():

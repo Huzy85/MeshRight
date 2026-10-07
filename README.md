@@ -78,6 +78,10 @@ No settings to learn, no account, and your files never leave your computer.
 
 **Colours and export**
 - Keeps colours from colour scans through every repair.
+- **Print in colours**: export a 3MF painted for a multi-colour printer.
+  MeshRight groups the scan's colours into 2 to 8 print colours and paints
+  every triangle, so Bambu Studio, OrcaSlicer and PrusaSlicer open it ready
+  to print. You only match each colour to a filament.
 - Export STL, 3MF, OBJ or PLY, or **open it straight in** Bambu Studio,
   OrcaSlicer, PrusaSlicer, UltiMaker Cura or Creality Print.
 - Save a project (.meshright) to carry on later.
@@ -86,6 +90,8 @@ No settings to learn, no account, and your files never leave your computer.
 - Several models open at once, in tabs. Very big files can be cancelled
   while they open.
 - Fix many files at once, in the app or from the command line.
+- Works with AI apps: `meshright mcp` offers the checks, Clean up and every
+  action to Claude Desktop, Claude Code, Cursor and other MCP apps (see Use).
 - Sample models, first-time tips and keyboard shortcuts (press **?**).
 - Runs on your own computer and works offline. The only thing it asks the
   internet is GitHub's latest version number, once a day (you can switch
@@ -135,6 +141,17 @@ Fix a whole folder (the fixed files and a report go into `meshright-fixed`):
 ```bash
 meshright fix scans/
 meshright fix scans/ --format stl --best-bottom
+```
+
+Let an AI app use it (needs `pip install "meshright[mcp]"`): MeshRight is
+an MCP server, so Claude Desktop, Claude Code, Cursor and other MCP apps can
+check a file, run Clean up or any single action, export a colour scan
+painted for a multi-colour printer, and read your printer settings, all on
+your own computer. Print the lines to paste into the app's
+settings with:
+
+```bash
+meshright mcp --show-config
 ```
 
 ## What's new

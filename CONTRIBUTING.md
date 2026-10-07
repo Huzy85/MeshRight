@@ -67,9 +67,47 @@ test, then a button and (if needed) a sheet in `web/index.html` and
 `web/app.js`. New `POST /api/doc/{id}/...` routes in `server.py` must come
 before the catch-all route for undo and redo.
 
+## The MCP server
+
+`src/meshright/mcp_server.py` offers the same checks and actions to AI apps
+over MCP (stdio). It needs the optional `mcp` extra. Each tool is a plain
+function whose docstring and type hints become the tool description, so a
+new tool is a function added to `TOOLS`. Tools take file paths and write a
+new file next to the original; they never overwrite the input. Run
+`meshright mcp --show-config` to see the lines a user pastes into their
+app's settings, and keep `tests/test_mcp_server.py` passing.
+
+## Checking against the model library
+
+Before a release, run the batch fix over the public test models:
+
+```bash
+python tools/check_library.py
+```
+
+It downloads the models in `tools/library.csv` (MIT-licensed test meshes,
+cached in `tools/library-cache/`, never committed), adds the built-in
+samples and the Stanford bunny, repairs each one with the Balanced preset
+and writes `tools/library-results.md`: score before and after, seconds, and
+what is left. Compare the table with the committed one; a model that got
+worse is a bug. Add models to the CSV with a licence that allows
+redistribution and a note on what the model tests.
+
+## Keep the download small
+
+The release workflow measures each packaged app and fails over 180 MB
+(`LIMIT_MB` in `.github/workflows/release.yml`). At 0.2.0 the apps are
+about 88 MB (Linux), 68 MB (Windows) and 45 MB (macOS). Before adding a
+library, check what it pulls in with `pip install --dry-run --report`;
+anything with a bundled Qt, Torch or OpenCV is out. Raspberry Pi and other
+ARM Linux machines are untested: `pip install meshright` there depends on
+aarch64 wheels for manifold3d, pymeshfix, fast-simplification and PyMCubes,
+so check those exist before adding a heavy compiled dependency.
+
 ## Releasing a new version
 
-Releases happen by themselves. Add a section for the new version at the top
+Releases happen by themselves. Run the model library check (above) and the
+tests, add a section for the new version at the top
 of `CHANGELOG.md` (`## 0.1.3` and a list of changes), then raise
 `__version__` in `src/meshright/__init__.py` to match. When that reaches
 `main`, GitHub builds the Windows, macOS and Linux apps, publishes a release
