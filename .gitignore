@@ -34,3 +34,6 @@ Thumbs.db
 
 # Packaged app builds
 *.spec
+
+# Model library for tools/check_library.py: downloaded, never committed
+/tools/library-cache/

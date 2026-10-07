@@ -1,0 +1,19 @@
+# Openly licensed models with real faults, for tools/check_library.py.
+# name,url,licence,what is wrong
+# Files are downloaded to tools/library-cache/ (not committed). Add a row
+# for any openly licensed model (CC-BY, CC0, MIT, public domain); never one
+# marked non-commercial or no-derivatives, and never a private scan.
+busted,https://raw.githubusercontent.com/mikedh/trimesh/main/models/busted.STL,MIT (trimesh test models),self-crossing surface
+soup,https://raw.githubusercontent.com/mikedh/trimesh/main/models/soup.stl,MIT (trimesh test models),loose triangles with no shared edges
+multibody,https://raw.githubusercontent.com/mikedh/trimesh/main/models/multibody.stl,MIT (trimesh test models),several pieces in one file
+fuze,https://raw.githubusercontent.com/mikedh/trimesh/main/models/fuze.obj,MIT (trimesh test models),textured scan of a bottle with an open bottom
+plate_holes,https://raw.githubusercontent.com/mikedh/trimesh/main/models/plate_holes.STL,MIT (trimesh test models),plate with through holes
+featuretype,https://raw.githubusercontent.com/mikedh/trimesh/main/models/featuretype.STL,MIT (trimesh test models),CAD part with many features
+not_convex,https://raw.githubusercontent.com/mikedh/trimesh/main/models/not_convex.obj,MIT (trimesh test models),concave shape
+teapot,https://raw.githubusercontent.com/mikedh/trimesh/main/models/teapot.stl,MIT (trimesh test models),classic teapot with open spout and lid gaps
+rabbit,https://raw.githubusercontent.com/mikedh/trimesh/main/models/rabbit.obj,MIT (trimesh test models),low-poly rabbit scan
+fixed_top,https://raw.githubusercontent.com/mikedh/trimesh/main/models/fixed_top.ply,MIT (trimesh test models),mesh with a patched top
+suzanne,https://raw.githubusercontent.com/mikedh/trimesh/main/models/suzanne.ply,MIT (trimesh test models),Blender monkey head with open eyes
+quadknot,https://raw.githubusercontent.com/mikedh/trimesh/main/models/quadknot.obj,MIT (trimesh test models),knot made of quads
+tube,https://raw.githubusercontent.com/mikedh/trimesh/main/models/tube.obj,MIT (trimesh test models),open tube
+points_emptyface,https://raw.githubusercontent.com/mikedh/trimesh/main/models/points_emptyface.ply,MIT (trimesh test models),a point cloud with no triangles
