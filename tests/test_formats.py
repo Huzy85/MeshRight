@@ -1,10 +1,11 @@
+import json
 import zipfile
 
 import numpy as np
 import pytest
 import trimesh
 
-from meshright.analysis import analyze_file, load_mesh
+from meshright.analysis import analyze, analyze_file, load_mesh
 
 from .conftest import save
 
@@ -86,3 +87,74 @@ def test_bad_amf(tmp_path):
     path.write_text("<amf><object/></amf>")
     with pytest.raises(ValueError):
         load_mesh(path)
+
+
+# ---------------------------------------------------------------- scanners
+
+
+def test_scanner_from_ply_comment(cube, tmp_path):
+    data = trimesh.exchange.ply.export_ply(cube, encoding="ascii")
+    data = data.replace(b"format ascii 1.0\n", b"format ascii 1.0\ncomment Created by Revo Scan 5.4\n", 1)
+    path = tmp_path / "scan.ply"
+    path.write_bytes(data)
+    mesh = load_mesh(path)
+    assert mesh.metadata["scanner"]["name"] == "Revopoint"
+    info = next(i for i in analyze(mesh).issues if i.code == "scan_source")
+    assert info.severity == "info" and info.title == "Scanned with Revopoint" and "Clean up" in info.detail
+
+
+def test_scanner_from_stl_header_obj_comment_and_gltf_generator(cube, tmp_path):
+    stl = bytearray(cube.export(file_type="stl"))
+    stl[0:80] = b"Exported by Creality Scan 3.2".ljust(80, b" ")
+    (tmp_path / "a.stl").write_bytes(stl)
+    (tmp_path / "b.obj").write_text("# Polycam 4.1\n" + cube.export(file_type="obj"), encoding="utf-8")
+    files = trimesh.exchange.gltf.export_gltf(trimesh.Scene(cube))
+    model = json.loads(files["model.gltf"])
+    model["asset"]["generator"] = "Scaniverse 3.0"
+    for name, blob in files.items():
+        (tmp_path / name).write_bytes(json.dumps(model).encode() if name == "model.gltf" else blob)
+    assert load_mesh(tmp_path / "a.stl").metadata["scanner"]["name"] == "Creality Scan"
+    assert load_mesh(tmp_path / "b.obj").metadata["scanner"]["name"] == "Polycam"
+    assert load_mesh(tmp_path / "model.gltf").metadata["scanner"]["name"] == "Scaniverse"
+
+
+def test_scanner_from_3mf_metadata(cube, tmp_path):
+    path = tmp_path / "scan.3mf"
+    path.write_bytes(cube.export(file_type="3mf"))
+    with zipfile.ZipFile(path) as zf:
+        files = {n: zf.read(n) for n in zf.namelist()}
+    name = next(n for n in files if n.endswith(".model"))
+    files[name] = files[name].replace(b"<resources>", b'<metadata name="Application">EXScan Pro 4</metadata><resources>', 1)
+    with zipfile.ZipFile(path, "w") as zf:
+        for n, blob in files.items():
+            zf.writestr(n, blob)
+    assert load_mesh(path).metadata["scanner"]["name"] == "Shining 3D"
+
+
+def test_unknown_maker_adds_no_line(cube, tmp_path):
+    mesh = load_mesh(save(cube, tmp_path))
+    assert "scanner" not in mesh.metadata
+    assert not [i for i in analyze(mesh).issues if i.code == "scan_source"]
+
+
+def test_scanner_word_must_stand_alone(cube, tmp_path):
+    # "farolite" is not FARO; "artec" inside "quartech" is not Artec.
+    (tmp_path / "a.obj").write_text("# farolite quartech export\n" + cube.export(file_type="obj"), encoding="utf-8")
+    assert "scanner" not in load_mesh(tmp_path / "a.obj").metadata
+
+
+def test_scanner_survives_changes_and_project_files(cube, tmp_path):
+    from meshright import project
+    from meshright.actions import run_action
+    from meshright.document import Document
+
+    (tmp_path / "a.obj").write_text("# Artec Studio 17\n" + cube.export(file_type="obj"), encoding="utf-8")
+    mesh = load_mesh(tmp_path / "a.obj")
+    moved, _ = run_action(mesh, "move", {"x": 5})
+    assert moved.metadata["scanner"]["name"] == "Artec"
+    doc = Document(name="a.obj", original=mesh)
+    doc.apply("move", {"x": 5})
+    saved = tmp_path / "a.meshright"
+    saved.write_bytes(project.save(doc))
+    again = project.load(saved)
+    assert again.mesh.metadata["scanner"]["name"] == "Artec"

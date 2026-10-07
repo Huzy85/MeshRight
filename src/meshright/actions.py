@@ -135,6 +135,8 @@ def run_action(mesh: trimesh.Trimesh, name: str, params: dict | None = None) -> 
         raise ActionError("That would leave nothing of the model, so it was not done.")
     from .colour import carry
 
+    if "scanner" in mesh.metadata:  # where the scan came from stays known
+        result.metadata["scanner"] = mesh.metadata["scanner"]
     return carry(mesh, result), receipt
 
 
