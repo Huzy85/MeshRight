@@ -58,6 +58,21 @@ jobs:
       - name: Name the file
         shell: bash
         run: mv "dist/${{ matrix.file }}" "dist/${{ matrix.asset }}"
+      - name: Measure the download
+        # The one-file app must stay a quick download. The size goes in the
+        # job summary; above the limit the build fails so a heavy new
+        # dependency is noticed before it ships.
+        shell: bash
+        env:
+          LIMIT_MB: 180
+        run: |
+          size=$(wc -c < "dist/${{ matrix.asset }}")
+          mb=$(( size / 1048576 ))
+          echo "${{ matrix.asset }}: ${mb} MB" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$mb" -gt "$LIMIT_MB" ]; then
+            echo "::error::${{ matrix.asset }} is ${mb} MB, over the ${LIMIT_MB} MB limit. See CONTRIBUTING.md, 'Keep the download small'."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
