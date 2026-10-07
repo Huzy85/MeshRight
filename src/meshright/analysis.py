@@ -132,12 +132,15 @@ def load_mesh(path: str | Path, file_type: str | None = None) -> trimesh.Trimesh
     except Exception as exc:  # the readers raise many different exception types
         raise MeshLoadError(f"Could not read the file: {exc}") from exc
 
+    scanner = formats.detect_scanner(path, file_type)
     if points is not None:
         try:
             mesh, note = pointcloud.points_to_mesh(points)
         except ValueError as exc:
             raise MeshLoadError(str(exc)) from exc
         mesh.metadata["notice"] = note
+        if scanner:
+            mesh.metadata["scanner"] = scanner
         return mesh
 
     if len(faces) == 0:
@@ -149,9 +152,12 @@ def load_mesh(path: str | Path, file_type: str | None = None) -> trimesh.Trimesh
     if not np.all(np.isfinite(vertices)):
         raise MeshLoadError("The file is damaged: some corners have no valid position.")
     try:
-        return trimesh.Trimesh(vertices=vertices, faces=faces, vertex_colors=colours, process=True, validate=False)
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, vertex_colors=colours, process=True, validate=False)
     except Exception as exc:
         raise MeshLoadError(f"Could not read the file: {exc}") from exc
+    if scanner:
+        mesh.metadata["scanner"] = scanner
+    return mesh
 
 
 def _scene_to_mesh(scene: trimesh.Scene) -> trimesh.Trimesh | None:
@@ -593,6 +599,17 @@ def analyze(mesh: trimesh.Trimesh, crossing: np.ndarray | None | bool = True, pr
                 "action": "reduce_detail",
                 "params": {"triangles": REDUCED_TRIANGLES},
             }],
+        ))
+
+    scanner = mesh.metadata.get("scanner") if isinstance(mesh.metadata, dict) else None
+    if isinstance(scanner, dict) and scanner.get("name"):
+        issues.append(Issue(
+            code="scan_source",
+            severity="info",
+            title=f"Scanned with {scanner['name']}",
+            detail=str(scanner.get("advice", "")),
+            count=1,
+            penalty=0,
         ))
 
     printable = not any(i.severity == "error" for i in issues)

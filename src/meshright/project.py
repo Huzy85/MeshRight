@@ -43,6 +43,7 @@ def save(doc: Document) -> bytes:
         "name": doc.name,
         "steps": [{"action": s.action, "params": _plain(s.params), "receipt": s.receipt} for s in applied],
         "earlier_steps": doc.dropped,
+        "scanner": doc.original.metadata.get("scanner"),
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -84,6 +85,11 @@ def load(path: str | Path) -> Document:
         raise ProjectError("This project file is damaged: the model is empty.")
 
     doc = Document(name=str(info.get("name", "model")), original=original)
+    scanner = info.get("scanner")
+    if isinstance(scanner, dict) and isinstance(scanner.get("name"), str):
+        original.metadata["scanner"] = {"name": scanner["name"][:80], "advice": str(scanner.get("advice", ""))[:1000]}
+        if current is not None:
+            current.metadata["scanner"] = original.metadata["scanner"]
     steps = [s for s in info.get("steps", []) if isinstance(s, dict)] if isinstance(info.get("steps"), list) else []
     if current is not None and len(current.faces) and steps:
         earlier = "; ".join(str(s.get("receipt", "")) for s in steps)
