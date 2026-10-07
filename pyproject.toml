@@ -35,6 +35,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "httpx>=0.27"]
+# Optional readers: binary USD (usdc, and usdz from iPhone Object Capture)
+# and E57 laser-scanner files. Text USD (usda) needs nothing extra.
+usd = ["usd-core>=24.0"]
+e57 = ["pye57>=0.4"]
 
 [project.scripts]
 meshright = "meshright.cli:main"

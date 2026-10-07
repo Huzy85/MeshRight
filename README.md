@@ -26,9 +26,14 @@ No settings to learn, no account, and your files never leave your computer.
 ## What it can do
 
 **Check**
-- Opens STL, 3MF, OBJ, PLY, GLB/glTF, OFF and AMF, and turns point clouds
-  (XYZ, ASC, PTS) into a surface. Wrong units and phone-scan orientation
-  (metres, Y up) are fixed automatically.
+- Opens STL, 3MF, OBJ, PLY, GLB/glTF, OFF, AMF and USD (USDA, USDZ as made
+  by iPhone Object Capture), and turns point clouds (XYZ, ASC, PTS, E57) into
+  a surface. Wrong units and phone-scan orientation (metres, Y up) are fixed
+  automatically. Binary USD and E57 need an optional reader:
+  `pip install "meshright[usd]"` or `pip install "meshright[e57]"`. FBX cannot
+  be read; MeshRight says what to export instead.
+- Says which scanner made a file (Revopoint, Creality, Shining 3D, Polycam,
+  Scaniverse, KIRI, Luma and others) and what its scans usually need.
 - A print-readiness score and a plain-English list of problems: holes, edges
   shared by too many triangles, surfaces cutting through themselves,
   inside-out parts, loose crumbs, walls too thin to print.

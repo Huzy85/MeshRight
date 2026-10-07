@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     serve.set_defaults(func=_serve)
 
     check = sub.add_parser("check", help="check mesh files and print a report")
-    check.add_argument("files", nargs="+", help="STL, 3MF, OBJ, PLY, GLB/glTF, OFF or AMF files")
+    check.add_argument("files", nargs="+", help="STL, 3MF, OBJ, PLY, GLB/glTF, OFF, AMF or USD files, or point clouds (XYZ, ASC, PTS, E57)")
     check.add_argument("--json", action="store_true", help="print the report as JSON")
     check.set_defaults(func=_check)
 
