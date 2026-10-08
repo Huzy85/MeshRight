@@ -26,6 +26,10 @@
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16V4h12v12M2.5 16h15M7 7h6v4H7z"/></svg>
         <span id="printer-name">Choose printer</span>
       </button>
+      <button type="button" class="plain" id="ai-open" title="Ask an AI about this model (optional, uses your own AI service)">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5l1.6 4.4 4.4 1.6-4.4 1.6L10 14.5l-1.6-4.4L4 8.5l4.4-1.6zM15.5 13l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg>
+        <span>Ask AI</span>
+      </button>
       <button type="button" class="icon" id="help-open" title="Help and shortcuts (?)" aria-label="Help">
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 1 1 3.2 2.1c-.6.3-1 .8-1 1.4v.4M10 14.2v.1"/></svg>
       </button>
@@ -50,7 +54,7 @@
         </div>
       </details>
       <label class="button primary" for="file-input">Open</label>
-      <input id="file-input" type="file" accept=".stl,.obj,.ply,.3mf,.glb,.gltf,.off,.amf,.usd,.usda,.usdc,.usdz,.fbx,.xyz,.asc,.pts,.e57,.meshright" multiple hidden>
+      <input id="file-input" type="file" accept=".stl,.obj,.ply,.3mf,.glb,.gltf,.off,.amf,.usd,.usda,.usdc,.usdz,.fbx,.xyz,.asc,.pts,.e57,.las,.laz,.meshright" multiple hidden>
     </div>
   </header>
 
@@ -59,7 +63,7 @@
       <div id="drop-hint">
         <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 5 41 14.5v19L24 43 7 33.5v-19zM24 24v19M7 14.5 24 24l17-9.5"/></svg>
         <p class="drop-title">Drop a 3D model here</p>
-        <p>STL, 3MF, OBJ, PLY, GLB, OFF, AMF or USDZ, or a point cloud (XYZ, ASC, PTS, E57). It stays on this computer.</p>
+        <p>STL, 3MF, OBJ, PLY, GLB, glTF, OFF, AMF or USD (USDA, USDC, USDZ), or a point cloud (XYZ, ASC, PTS, E57, LAS, LAZ). It stays on this computer.</p>
         <label class="button primary" for="file-input">Choose a file</label>
         <p class="batch-hint">Several files? Choose or drop them together to fix them all at once.</p>
         <div id="samples" hidden>
@@ -269,7 +273,7 @@
             <label class="button soft" for="combine-input" title="Join another model on, or cut its shape out">Combine…</label>
             <input id="combine-input" type="file" accept=".stl,.obj,.ply,.3mf,.glb,.gltf,.off,.amf,.usd,.usda,.usdc,.usdz" hidden>
             <label class="button soft" for="merge-input" title="Line up and fuse a scan taken from another side">Merge scans…</label>
-            <input id="merge-input" type="file" accept=".stl,.obj,.ply,.3mf,.glb,.gltf,.off,.amf,.usd,.usda,.usdc,.usdz,.xyz,.asc,.pts,.e57" hidden>
+            <input id="merge-input" type="file" accept=".stl,.obj,.ply,.3mf,.glb,.gltf,.off,.amf,.usd,.usda,.usdc,.usdz,.xyz,.asc,.pts,.e57,.las,.laz" hidden>
           </div>
           <p class="hint">Erase things you do not want, such as the table a scanner picked up. Give open surfaces like face scans a printable thickness. Combine adds a stand or handle, or cuts a shape out. Merge scans taken from different sides.</p>
         </section>
@@ -318,6 +322,7 @@
         <dt><kbd>?</kbd></dt><dd>This list</dd>
       </dl>
       <p class="hint">Mouse: drag to turn the view, right-drag or two-finger drag to pan, scroll to zoom.</p>
+      <p class="hint"><strong>Ask AI</strong> (optional): connect an AI service you use, or one on this computer such as Ollama, and ask about your model. It is sent the check report and your question, never the model, and nothing changes until you press Apply.</p>
       <div class="about">
         <p><strong>MeshRight <span id="app-version"></span></strong> <span id="update-text"></span></p>
         <label class="toggle-line"><input type="checkbox" id="update-auto" checked>Tell me when a new version is out</label>
@@ -493,6 +498,57 @@
       <div class="dialog-actions">
         <button type="submit" value="apply" class="primary">Hollow</button>
         <button type="submit" value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="ai-dialog" aria-labelledby="ai-title">
+    <form method="dialog" id="ai-form">
+      <h2 id="ai-title">Ask AI</h2>
+      <p class="sub">Ask in your own words, for example "will this print?" or "make it 15 cm tall and fix it". The AI sees the check report, never your model. It can only suggest changes; nothing happens until you press Apply, and each step can be undone.</p>
+      <p class="sub" id="ai-using"></p>
+      <label class="stack" for="ai-question">Your question
+        <textarea id="ai-question" rows="3" maxlength="2000" placeholder="Why is this not ready to print?"></textarea>
+      </label>
+      <div id="ai-answer" class="ai-answer" hidden>
+        <p id="ai-reply"></p>
+        <ol id="ai-steps" class="ai-steps"></ol>
+        <p class="sub" id="ai-dropped" hidden></p>
+      </div>
+      <p class="error-line" id="ai-error" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" id="ai-settings-open" class="link-button">AI settings</button>
+        <button type="button" id="ai-apply" hidden>Apply ticked steps</button>
+        <button type="button" id="ai-ask" class="primary">Ask</button>
+        <button type="submit" value="close" formnovalidate>Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="ai-settings-dialog" aria-labelledby="ai-settings-title">
+    <form method="dialog" id="ai-settings-form">
+      <h2 id="ai-settings-title">Connect an AI</h2>
+      <p class="sub">Optional. MeshRight works fully without it. Use a service you already pay for, or a free one that runs on this computer (Ollama, LM Studio). Your key is kept on this computer only, in a file only you can read, and is never shown again.</p>
+      <label class="stack" for="ai-provider">Service
+        <select id="ai-provider"></select>
+      </label>
+      <label class="stack" for="ai-model">Model
+        <input id="ai-model" type="text" maxlength="200" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="stack" for="ai-key">API key <span class="sub" id="ai-key-note"></span>
+        <input id="ai-key" type="password" maxlength="500" autocomplete="off" spellcheck="false">
+      </label>
+      <details class="disclosure">
+        <summary>Address (only change for a custom or local service)</summary>
+        <input id="ai-base" type="url" maxlength="300" autocomplete="off" spellcheck="false">
+      </details>
+      <p class="sub" id="ai-test-result" hidden></p>
+      <p class="error-line" id="ai-settings-error" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" id="ai-forget" class="link-button">Forget</button>
+        <button type="button" id="ai-test">Test</button>
+        <button type="button" id="ai-save" class="primary">Save</button>
+        <button type="submit" value="close" formnovalidate>Close</button>
       </div>
     </form>
   </dialog>

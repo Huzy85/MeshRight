@@ -586,12 +586,60 @@ loadSettings();
 let docId = null;
 let busy = false;
 
+// The server's message for a failed request, as one plain sentence (a
+// validation error arrives as a list of problems).
+function errorText(data, status) {
+  const detail = data && data.detail;
+  if (typeof detail === 'string' && detail) return detail;
+  if (Array.isArray(detail) && detail.length) {
+    return detail.map((d) => (d && d.msg) || String(d)).join(' ');
+  }
+  return `Something went wrong (error ${status}).`;
+}
+
 async function request(url, options = {}) {
-  const res = await fetch(url, options);
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch {
+    throw new Error('Could not reach MeshRight. Is it still running?');
+  }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || `Something went wrong (error ${res.status}).`);
+  if (!res.ok) throw new Error(errorText(data, res.status));
   return data;
 }
+
+// Download a file the server makes, reporting any error instead of a
+// silent failure. Returns the response so callers can read its headers.
+async function download(url, fallbackName) {
+  let res;
+  try {
+    res = await fetch(url);
+  } catch {
+    throw new Error('Could not reach MeshRight. Is it still running?');
+  }
+  if (!res.ok) throw new Error(errorText(await res.json().catch(() => ({})), res.status));
+  const blob = await res.blob();
+  const header = res.headers.get('content-disposition') || '';
+  const encoded = header.match(/filename\*=UTF-8''([^;]+)/i);
+  const plain = header.match(/filename="([^"]+)"/);
+  let name = fallbackName;
+  try { name = encoded ? decodeURIComponent(encoded[1]) : plain ? plain[1] : fallbackName; } catch { /* keep fallback */ }
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+  return res;
+}
+
+// Anything that slips through still reaches the user as a message.
+window.addEventListener('unhandledrejection', (event) => {
+  const message = event.reason && event.reason.message;
+  showStatus(message || 'Something went wrong. Please try again.', 'error');
+});
 
 // The server reads every supported format, fixes units and orientation, and
 // sends back the exact mesh it checked, so the highlights always line up.
@@ -628,7 +676,7 @@ function uploadWithProgress(url, body, onProgress) {
       let data = {};
       try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
       if (xhr.status >= 200 && xhr.status < 300) resolve(data);
-      else reject(new Error(data.detail || `Something went wrong (error ${xhr.status}).`));
+      else reject(new Error(errorText(data, xhr.status)));
     });
     xhr.addEventListener('error', () => reject(new Error('Could not reach MeshRight. Is it still running?')));
     xhr.send(body);
@@ -2275,11 +2323,19 @@ async function openFile(file) {
       busyText.textContent = share < 1 ? `Opening… ${Math.round(share * 100)}%${slowNote}` : `Checking your model…${slowNote}`;
     });
     if (loadId !== currentLoad) return;  // a newer file was opened meanwhile
+    const previous = docId;
     docId = state.doc_id;
+    try {
+      await showState(state, { keepView: false });
+    } catch (err) {
+      // Could not show it: close it on the server and go back to what was open.
+      fetch(`api/doc/${state.doc_id}`, { method: 'DELETE' }).catch(() => {});
+      docId = previous;
+      throw err;
+    }
     addTab(state.doc_id, state.name);
     $('drop-hint').hidden = true;
     $('view-controls').hidden = false;
-    await showState(state, { keepView: false });
     if (state.notice) showStatus(state.notice);
   } catch (err) {
     if (err.cancelled) return;
@@ -2365,7 +2421,9 @@ async function closeTab(id) {
   if (next) {
     docId = null;
     await switchTo(next.id);
-    return;
+    // If that one could not be shown, try the others before giving up.
+    while (!docId && openDocs.length) await switchTo(openDocs[0].id);
+    if (docId) return;
   }
   // Nothing left open: back to the start screen.
   exitModes();
@@ -2380,53 +2438,40 @@ async function closeTab(id) {
   renderTabs();
 }
 
-function saveProject() {
+async function saveProject() {
   $('export-menu').open = false;
   if (!docId) {
     showStatus('Open a model first.', 'error');
     return;
   }
-  const link = document.createElement('a');
-  link.href = `api/doc/${docId}/project`;
-  link.download = '';
-  document.body.append(link);
-  link.click();
-  link.remove();
-  showStatus('Project saved. Open the .meshright file later to carry on.');
+  showStatus('Saving the project…', 'busy');
+  try {
+    await download(`api/doc/${docId}/project`, 'model.meshright');
+    showStatus('Project saved. Open the .meshright file later to carry on.');
+  } catch (err) {
+    showStatus(err.message, 'error');
+  }
 }
 
-function exportAs(format) {
+async function exportAs(format) {
   $('export-menu').open = false;
   if (!docId) {
     showStatus('Open a model first.', 'error');
     return;
   }
-  const link = document.createElement('a');
-  link.href = `api/doc/${docId}/export?format=${format}`;
-  link.download = '';
-  document.body.append(link);
-  link.click();
-  link.remove();
-  showStatus(`Saved as ${format.toUpperCase()}. Check your Downloads folder.`);
+  showStatus(`Saving as ${format.toUpperCase()}…`, 'busy');
+  try {
+    await download(`api/doc/${docId}/export?format=${format}`, `model-meshright.${format}`);
+    showStatus(`Saved as ${format.toUpperCase()}. Check your Downloads folder.`);
+  } catch (err) {
+    showStatus(err.message, 'error');
+  }
 }
 
 async function exportColours(count) {
   showStatus('Grouping the colours…', 'busy');
   try {
-    const res = await fetch(`api/doc/${docId}/export-colours?colours=${count}`);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.detail || `Export failed (${res.status}).`);
-    }
-    const blob = await res.blob();
-    const name = (res.headers.get('content-disposition') || '').match(/filename="([^"]+)"/);
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = name ? name[1] : 'model-meshright-colours.3mf';
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+    const res = await download(`api/doc/${docId}/export-colours?colours=${count}`, 'model-meshright-colours.3mf');
     let colours = [];
     try { colours = JSON.parse(res.headers.get('x-colours') || '[]'); } catch { colours = []; }
     const list = colours.map((c) => `${c.colour} (${Math.round(c.share * 100)}%)`).join(', ');
@@ -2604,10 +2649,14 @@ async function loadSamples() {
       button.title = item.about;
       button.addEventListener('click', async () => {
         if (busy) return;
-        const res = await fetch(`api/samples/${item.id}`);
-        if (!res.ok) { showStatus('Could not make that sample.', 'error'); return; }
-        openFile(new File([await res.blob()], item.name, { type: 'model/stl' }));
-        showTip(`sample-${item.id}`, item.about);
+        try {
+          const res = await fetch(`api/samples/${item.id}`);
+          if (!res.ok) throw new Error('not made');
+          openFile(new File([await res.blob()], item.name, { type: 'model/stl' }));
+          showTip(`sample-${item.id}`, item.about);
+        } catch {
+          showStatus('Could not make that sample. Is MeshRight still running?', 'error');
+        }
       });
       holder.append(button);
     }
@@ -2630,6 +2679,17 @@ const TIPS = {
   'sculpt-start': 'Drag across the model to brush it. Drag off the model to turn the view. [ and ] change the brush size; each stroke can be undone.',
   'combine': 'Drag the arrows to move, or press R to turn and S to resize. "Cut it away" removes its shape from your model.',
   'merge': 'Click a spot on the blue model, then the same spot on the orange scan. Three pairs is enough; more gives a better fit.',
+  'up-open': 'Scans often come in lying on their side. Pick the view that looks upright; the model turns to match.',
+  'pick-start': 'Click three or more spots that should touch the bed, for example the soles of the feet. The model turns so they lie flat.',
+  'best-open': 'MeshRight tries the model in many positions and ranks them by how much support it needs and how steady it stands.',
+  'thick-open': 'For flat scans or single surfaces with no inside, like a face mask. Adds a back so the slicer sees a solid.',
+  'solid-open': 'Rebuilds the model as one sealed solid. Use it when Clean up cannot close every hole. Fine details soften a little.',
+  'make-solid': 'Rebuilds the model as one sealed solid. Use it when Clean up cannot close every hole. Fine details soften a little.',
+  'walls-check': 'Shows walls thinner than your nozzle can print in red. Thin walls break or vanish in the slicer.',
+  'hollow-open': 'For resin printers: hollows the inside to save resin, and adds drain holes so liquid resin can escape.',
+  'bust-open': 'Cuts a scanned person at the neck or chest and adds a flat base, so it stands on a shelf.',
+  'cleanup-apply': 'Fills holes, removes stray bits, fixes inside-out triangles and trims extra detail. Each step can be undone.',
+  'revert': 'Goes back to the file as you opened it. This can be undone too.',
 };
 
 function seenTips() {
@@ -2758,4 +2818,217 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && (measuring || holing)) exitModes();
+});
+
+// Tips for the small buttons that change the model straight away.
+const ACTION_TIPS = {
+  place_on_bed: 'Puts the model flat on the bed and in the middle, the way it will print.',
+  mirror: 'Flips the model left to right, for example to make a left hand from a right one.',
+};
+for (const button of document.querySelectorAll('[data-action]')) {
+  const text = ACTION_TIPS[button.dataset.action];
+  if (text) button.addEventListener('click', () => { if (docId) showTip(`action-${button.dataset.action}`, text); });
+}
+
+// ---------------------------------------------------------------- Ask AI
+// Optional: the user connects their own AI service. The AI sees the check
+// report only, and its suggested steps run through the normal actions, so
+// each one shows in the history and can be undone.
+
+let aiInfo = null;
+let aiSteps = [];
+
+function aiShowError(id, message) {
+  $(id).textContent = message || '';
+  $(id).hidden = !message;
+}
+
+async function loadAi() {
+  aiInfo = await request('api/assistant');
+  return aiInfo;
+}
+
+function fillAiSettings(providerId) {
+  const info = aiInfo;
+  const select = $('ai-provider');
+  if (!select.options.length) {
+    for (const [id, p] of Object.entries(info.providers)) select.append(new Option(p.label, id));
+  }
+  const saved = info.config;
+  const id = providerId || (saved && saved.provider) || 'openai';
+  const preset = info.providers[id];
+  select.value = id;
+  const same = saved && saved.provider === id;
+  $('ai-model').value = same ? saved.model : preset.model;
+  $('ai-base').value = same ? saved.base_url : preset.base_url;
+  $('ai-key').value = '';
+  $('ai-key').placeholder = same && saved.has_key ? `Saved (${saved.key_hint || 'hidden'}). Leave empty to keep it.` : (preset.key ? 'Paste your key' : 'Not needed for most local programs');
+  $('ai-key-note').textContent = preset.key ? '' : '(optional)';
+  aiShowError('ai-settings-error', '');
+  $('ai-test-result').hidden = true;
+}
+
+async function openAiSettings() {
+  try {
+    await loadAi();
+  } catch (err) {
+    showStatus(err.message, 'error');
+    return;
+  }
+  fillAiSettings();
+  if (!$('ai-settings-dialog').open) $('ai-settings-dialog').showModal();
+}
+
+async function saveAi() {
+  aiShowError('ai-settings-error', '');
+  try {
+    aiInfo = await request('api/assistant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider: $('ai-provider').value,
+        model: $('ai-model').value.trim(),
+        base_url: $('ai-base').value.trim(),
+        api_key: $('ai-key').value.trim(),
+      }),
+    });
+    $('ai-key').value = '';
+    fillAiSettings();
+    return true;
+  } catch (err) {
+    aiShowError('ai-settings-error', err.message);
+    return false;
+  }
+}
+
+$('ai-provider').addEventListener('change', () => fillAiSettings($('ai-provider').value));
+$('ai-save').addEventListener('click', async () => {
+  if (await saveAi()) {
+    $('ai-settings-dialog').close();
+    showStatus('AI connected. Ask it anything about your model.');
+    openAi();
+  }
+});
+$('ai-test').addEventListener('click', async () => {
+  if (!(await saveAi())) return;
+  $('ai-test-result').hidden = false;
+  $('ai-test-result').textContent = 'Testing…';
+  try {
+    const result = await request('api/assistant/test', { method: 'POST' });
+    $('ai-test-result').textContent = result.message;
+  } catch (err) {
+    $('ai-test-result').hidden = true;
+    aiShowError('ai-settings-error', err.message);
+  }
+});
+$('ai-forget').addEventListener('click', async () => {
+  try {
+    aiInfo = await request('api/assistant', { method: 'DELETE' });
+    fillAiSettings();
+    showStatus('AI settings and key removed from this computer.');
+  } catch (err) {
+    aiShowError('ai-settings-error', err.message);
+  }
+});
+
+async function openAi() {
+  try {
+    await loadAi();
+  } catch (err) {
+    showStatus(err.message, 'error');
+    return;
+  }
+  if (!aiInfo.connected) {
+    openAiSettings();
+    return;
+  }
+  const c = aiInfo.config;
+  $('ai-using').textContent = `Using ${aiInfo.providers[c.provider].label}, model ${c.model}.`;
+  aiShowError('ai-error', docId ? '' : 'Open a model first, then ask about it.');
+  if (!$('ai-dialog').open) $('ai-dialog').showModal();
+  $('ai-question').focus();
+}
+
+function showAiAnswer(answer) {
+  aiSteps = answer.steps || [];
+  $('ai-reply').textContent = answer.reply || '';
+  const list = $('ai-steps');
+  list.replaceChildren();
+  aiSteps.forEach((step, i) => {
+    const item = document.createElement('li');
+    const label = document.createElement('label');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = true;
+    box.dataset.index = String(i);
+    const text = document.createElement('span');
+    const settingsText = Object.entries(step.params).map(([k, v]) => `${k.replaceAll('_', ' ')}: ${v}`).join(', ');
+    text.textContent = step.title + (settingsText ? ` (${settingsText})` : '');
+    if (step.why) {
+      const why = document.createElement('small');
+      why.textContent = step.why;
+      text.append(why);
+    }
+    label.append(box, text);
+    item.append(label);
+    list.append(item);
+  });
+  const dropped = answer.dropped || [];
+  $('ai-dropped').textContent = dropped.join(' ');
+  $('ai-dropped').hidden = !dropped.length;
+  $('ai-apply').hidden = !aiSteps.length;
+  $('ai-answer').hidden = false;
+}
+
+$('ai-open').addEventListener('click', openAi);
+$('ai-settings-open').addEventListener('click', () => { $('ai-dialog').close(); openAiSettings(); });
+$('ai-ask').addEventListener('click', async () => {
+  aiShowError('ai-error', '');
+  if (!docId) { aiShowError('ai-error', 'Open a model first, then ask about it.'); return; }
+  const question = $('ai-question').value.trim();
+  if (!question) { aiShowError('ai-error', 'Type a question first.'); return; }
+  $('ai-ask').disabled = true;
+  $('ai-ask').textContent = 'Thinking…';
+  try {
+    showAiAnswer(await request(`api/doc/${docId}/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    }));
+  } catch (err) {
+    aiShowError('ai-error', err.message);
+  } finally {
+    $('ai-ask').disabled = false;
+    $('ai-ask').textContent = 'Ask';
+  }
+});
+$('ai-question').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('ai-ask').click(); }
+});
+$('ai-apply').addEventListener('click', async () => {
+  if (!docId || busy) return;
+  const chosen = [...$('ai-steps').querySelectorAll('input:checked')].map((b) => aiSteps[Number(b.dataset.index)]);
+  if (!chosen.length) { aiShowError('ai-error', 'Tick at least one step.'); return; }
+  $('ai-dialog').close();
+  const forDoc = docId;
+  exitModes();
+  setBusy(true);
+  let done = 0;
+  try {
+    for (const step of chosen) {
+      showStatus(`Step ${done + 1} of ${chosen.length}: ${step.title}…`, 'busy');
+      const state = await request(`api/doc/${forDoc}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: step.action, params: step.params }),
+      });
+      done += 1;
+      if (forDoc === docId) await showState(state, { keepView: true });
+    }
+    showStatus(`Done: ${done} step${done === 1 ? '' : 's'} applied. Press Undo to take any back.`);
+  } catch (err) {
+    showStatus(`Stopped after ${done} of ${chosen.length} steps. ${err.message}`, 'error');
+  } finally {
+    setBusy(false);
+  }
 });

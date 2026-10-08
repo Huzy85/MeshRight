@@ -6,6 +6,8 @@ mesh, call :func:`analyze`, get back a report that a beginner can read.
 
 from __future__ import annotations
 
+import logging
+
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -17,7 +19,7 @@ from . import formats
 SUPPORTED_EXTENSIONS = (
     ".stl", ".obj", ".ply", ".3mf", ".glb", ".gltf", ".off", ".amf",
     ".usd", ".usda", ".usdc", ".usdz",  # USD: text read here, binary with the optional usd-core
-    ".xyz", ".asc", ".pts", ".e57",  # point clouds (E57 with the optional pye57)
+    ".xyz", ".asc", ".pts", ".e57", ".las", ".laz",  # point clouds (E57 and LAS/LAZ need optional readers)
     ".fbx",  # not readable: opened so the user gets told what to export instead
 )
 
@@ -33,6 +35,7 @@ UNPRINTABLE_SCORE_CAP = 59
 
 # Outside this range the units are probably wrong (the file stores none).
 TINY_MODEL_MM = 10
+PRINTABLE_MIN_MM = 1.0  # smaller than this cannot be printed at all
 
 # Above this the self-crossing check is skipped when a file opens (it would
 # take too long); Clean up reduces the detail and checks afterwards.
@@ -58,6 +61,9 @@ CLEANUP_FIX = {"label": "Clean up…", "action": "cleanup", "params": {}, "previ
 # Closer to the bed than this counts as sitting on it.
 ON_BED_TOLERANCE_MM = 0.01
 HUGE_MODEL_MM = 1000
+
+
+log = logging.getLogger("meshright")
 
 
 class MeshLoadError(ValueError):
@@ -106,6 +112,7 @@ def load_mesh(path: str | Path, file_type: str | None = None) -> trimesh.Trimesh
 
     points = None
     colours = None
+    flat_colour = False
     try:
         if file_type == "amf":
             vertices, faces = formats.read_amf(path)
@@ -116,10 +123,14 @@ def load_mesh(path: str | Path, file_type: str | None = None) -> trimesh.Trimesh
         elif file_type == "e57":
             points = formats.read_e57(path)
             vertices, faces = points, np.zeros((0, 3), dtype=np.int64)
+        elif file_type in ("las", "laz"):
+            points = formats.read_las(path)
+            vertices, faces = points, np.zeros((0, 3), dtype=np.int64)
         elif f".{file_type}" in pointcloud.POINT_EXTENSIONS:
             points = pointcloud.read_text_points(path)
             vertices, faces = points, np.zeros((0, 3), dtype=np.int64)
         else:
+            _precheck(path, file_type)
             loaded = trimesh.load(path, file_type=file_type, process=False)
             if isinstance(loaded, trimesh.PointCloud):
                 loaded = trimesh.Trimesh(vertices=loaded.vertices, faces=np.zeros((0, 3), dtype=np.int64), process=False)
@@ -132,6 +143,7 @@ def load_mesh(path: str | Path, file_type: str | None = None) -> trimesh.Trimesh
                 from .colour import from_loaded
 
                 colours = from_loaded(loaded)
+                flat_colour = colours is None and _one_colour(loaded)
             if len(faces) == 0 and len(vertices):
                 points = np.asarray(vertices, dtype=np.float64)  # a PLY of points only
             if file_type in ("glb", "gltf"):
@@ -142,7 +154,13 @@ def load_mesh(path: str | Path, file_type: str | None = None) -> trimesh.Trimesh
     except MeshLoadError:
         raise
     except Exception as exc:  # the readers raise many different exception types
-        raise MeshLoadError(f"Could not read the file: {exc}") from exc
+        if isinstance(exc, formats.ReadError):  # already written for the user
+            raise MeshLoadError(str(exc)) from exc
+        log.warning("Reading %s failed: %r", path.name, exc)
+        raise MeshLoadError(
+            f"Could not read this file. It may be damaged, cut short, or not really a .{file_type} file. "
+            "Try exporting it again from the program or app that made it."
+        ) from exc
 
     scanner = formats.detect_scanner(path, file_type)
     if points is not None:
@@ -156,7 +174,10 @@ def load_mesh(path: str | Path, file_type: str | None = None) -> trimesh.Trimesh
         return mesh
 
     if len(faces) == 0:
-        raise MeshLoadError("The file does not contain any triangles.")
+        raise MeshLoadError(
+            "The file does not contain any triangles. It may be empty, or cut short by an "
+            "incomplete download or copy. Try exporting or downloading it again."
+        )
     faces = np.asarray(faces, dtype=np.int64)
     vertices = np.asarray(vertices, dtype=np.float64)
     if faces.ndim != 2 or faces.shape[1] != 3 or faces.min() < 0 or faces.max() >= len(vertices):
@@ -166,10 +187,56 @@ def load_mesh(path: str | Path, file_type: str | None = None) -> trimesh.Trimesh
     try:
         mesh = trimesh.Trimesh(vertices=vertices, faces=faces, vertex_colors=colours, process=True, validate=False)
     except Exception as exc:
-        raise MeshLoadError(f"Could not read the file: {exc}") from exc
+        log.warning("Building the mesh for %s failed: %r", path.name, exc)
+        raise MeshLoadError("Could not read this file. It may be damaged.") from exc
     if scanner:
         mesh.metadata["scanner"] = scanner
+    notes = []
+    if flat_colour:
+        notes.append("This file is one colour all over, so it opens as a plain model. "
+                     "Printing in colours needs a scan or model with at least two colours.")
+    if len(mesh.faces) > LARGE_TRIANGLES:
+        notes.append(f"This model has {len(mesh.faces) / 1e6:.1f} million triangles, far more than a printer "
+                     "can show. Every change will be slow. Use Reduce detail first to speed things up.")
+    if notes:
+        mesh.metadata["notice"] = " ".join(notes)
     return mesh
+
+
+# Above this many triangles the user is told to reduce detail first.
+LARGE_TRIANGLES = 3_000_000
+
+
+def _one_colour(loaded) -> bool:
+    """The file has colours, all the same."""
+    visual = getattr(loaded, "visual", None)
+    try:
+        return bool(visual is not None and visual.defined and visual.kind in ("vertex", "face"))
+    except Exception:  # noqa: BLE001 - only used for a note
+        return False
+
+
+# OBJ files above this size are not scanned for 0-based face numbers.
+_OBJ_SCAN_BYTES = 300 * 1024 * 1024
+
+
+def _precheck(path: Path, file_type: str) -> None:
+    """Cheap checks before a reader runs: zipped 3MF files that unpack too
+    big, and OBJ files that number corners from 0 (OBJ counts from 1, so
+    such a file would load with its triangles silently scrambled)."""
+    import re
+    import zipfile
+
+    if file_type == "3mf" and zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as zf:
+            if sum(i.file_size for i in zf.infolist()) > formats.MAX_UNZIPPED_BYTES:
+                raise MeshLoadError("This file unpacks to more than 2 GB, so it was not opened.")
+    elif file_type == "obj" and path.stat().st_size <= _OBJ_SCAN_BYTES:
+        if re.search(rb"^f[ \t](?:[^\n]*[ \t])?0(?:/|[ \t]|\r?$)", path.read_bytes(), re.M):
+            raise MeshLoadError(
+                "This OBJ file numbers its corners from 0, but OBJ counts from 1, so its triangles "
+                "would come out scrambled. The program that wrote it has a bug; try another export option."
+            )
 
 
 def _scene_to_mesh(scene: trimesh.Scene) -> trimesh.Trimesh | None:
@@ -431,7 +498,7 @@ def analyze(mesh: trimesh.Trimesh, crossing: np.ndarray | None | bool = True, pr
         issues.append(Issue(
             code="non_manifold",
             severity="error",
-            title=f"{n} non-manifold edge{'s' if n != 1 else ''}",
+            title=f"{n} edge{'s' if n != 1 else ''} shared by too many triangles",
             detail=(
                 "Some edges are shared by more than two triangles, like pages "
                 "glued to one spine. Slicers often fail or guess here. Shown in orange."
@@ -549,10 +616,12 @@ def analyze(mesh: trimesh.Trimesh, crossing: np.ndarray | None | bool = True, pr
         # Parts laid out side by side: judge the units by the biggest part.
         largest = max(float(np.ptp(mesh.vertices[np.unique(mesh.faces[labels == k])], axis=0).max()) for k in range(pieces))
     if 0 < largest < TINY_MODEL_MM:
+        too_small = largest < PRINTABLE_MIN_MM
         issues.append(Issue(
             code="tiny_model",
-            severity="info",
-            title=f"Very small: only {largest:.3g} mm across",
+            # Below a millimetre nothing prints, so it must not read "Ready".
+            severity="error" if too_small else "info",
+            title=f"{'Too small to print' if too_small else 'Very small'}: only {largest:.3g} mm across",
             detail=(
                 "STL files do not store units, so a model saved in inches, "
                 "centimetres or metres opens far too small. If it should be "

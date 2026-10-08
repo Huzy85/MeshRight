@@ -31,6 +31,32 @@ GLTF_TO_PRINT = np.array(
 )
 
 
+
+class ReadError(ValueError):
+    """A file could not be read, with a message written for the user."""
+
+
+# A zipped model may not unpack to more than this. A tiny crafted zip can
+# otherwise expand to many gigabytes and exhaust the computer's memory.
+MAX_UNZIPPED_BYTES = 2 * 1024 * 1024 * 1024
+
+
+def read_zip_member(zf: zipfile.ZipFile, name: str, limit: int = MAX_UNZIPPED_BYTES) -> bytes:
+    """One file from a zip, refusing anything that unpacks too big. The size
+    written in the zip can lie, so the bytes are counted as they come."""
+    info = zf.getinfo(name)
+    if info.file_size > limit:
+        raise ReadError("This file unpacks to more than 2 GB, so it was not opened.")
+    chunks, total = [], 0
+    with zf.open(info) as handle:
+        while chunk := handle.read(1024 * 1024):
+            total += len(chunk)
+            if total > limit:
+                raise ReadError("This file unpacks to more than 2 GB, so it was not opened.")
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _local(tag: str) -> str:
     """Tag name without any XML namespace."""
     return tag.rsplit("}", 1)[-1]
@@ -43,12 +69,12 @@ def read_amf(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             names = [n for n in zf.namelist() if not n.endswith("/")]
             if not names:
-                raise ValueError("The AMF archive is empty.")
-            data = zf.read(names[0])
+                raise ReadError("The AMF archive is empty.")
+            data = read_zip_member(zf, names[0])
 
     root = ET.fromstring(data)
     if _local(root.tag) != "amf":
-        raise ValueError("Not an AMF file.")
+        raise ReadError("Not an AMF file.")
     scale = AMF_UNITS_TO_MM.get((root.get("unit") or "millimeter").lower(), 1.0)
 
     all_vertices: list[np.ndarray] = []
@@ -70,7 +96,7 @@ def read_amf(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
         offset += len(coords)
 
     if not all_faces:
-        raise ValueError("The AMF file does not contain any triangles.")
+        raise ReadError("The AMF file does not contain any triangles.")
     return np.vstack(all_vertices) * scale, np.vstack(all_faces)
 
 
@@ -161,13 +187,18 @@ def _header_text(path: Path, file_type: str) -> str:
     return "\n".join(lines)
 
 
+def _head(zf: zipfile.ZipFile, name: str) -> bytes:
+    with zf.open(name) as handle:
+        return handle.read(_HEADER_BYTES)
+
+
 def _asset_text(path: Path, file_type: str) -> str:
     import json
 
     if file_type == "3mf":
         with zipfile.ZipFile(path) as zf:
             names = [n for n in zf.namelist() if n.lower().endswith(".model")]
-            text = " ".join(zf.read(n)[:_HEADER_BYTES].decode("utf-8", "replace") for n in names[:2])
+            text = " ".join(_head(zf, n).decode("utf-8", "replace") for n in names[:2])
             found = []
             for el in ET.fromstring(_complete_xml(text)).iter():
                 if _local(el.tag) == "metadata" and el.text:
@@ -232,8 +263,10 @@ def detect_scanner(path: str | Path, file_type: str | None = None) -> dict | Non
 
 USD_EXTENSIONS = (".usd", ".usda", ".usdc", ".usdz")
 USD_BINARY_HELP = (
-    "This USD file is binary (usdc), which needs Pixar's reader: install it with "
-    "'pip install meshright[usd]', or export the model as OBJ, GLB or USDA instead."
+    "This USD file is binary (usdc), which needs Pixar's large reader. It is not in the downloaded "
+    "app, to keep it small. Export the model as OBJ, GLB or USDA instead (Reality Composer, Blender "
+    "and most scanner apps can), or, if you installed MeshRight with pip, run "
+    "'pip install meshright[usd]'."
 )
 
 
@@ -247,15 +280,15 @@ def read_usd(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
         return _read_usda(data.decode("utf-8", "replace"))
     if data[:8] == b"PXR-USDC":
         return _read_with_pixar(path)
-    raise ValueError("Not a USD file.")
+    raise ReadError("Not a USD file.")
 
 
 def _read_usdz(path: Path, data: bytes) -> tuple[np.ndarray, np.ndarray]:
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         layers = [n for n in zf.namelist() if n.lower().endswith((".usda", ".usdc", ".usd"))]
         if not layers:
-            raise ValueError("The USDZ archive holds no model.")
-        first = zf.read(layers[0])  # the first layer in the archive is the scene
+            raise ReadError("The USDZ archive holds no model.")
+        first = read_zip_member(zf, layers[0])  # the first layer in the archive is the scene
     if first[:5] == b"#usda":
         return _read_usda(first.decode("utf-8", "replace"))
     return _read_with_pixar(path)
@@ -265,10 +298,10 @@ def _read_with_pixar(path: Path) -> tuple[np.ndarray, np.ndarray]:
     try:
         from pxr import Usd, UsdGeom
     except ImportError as exc:
-        raise ValueError(USD_BINARY_HELP) from exc
+        raise ReadError(USD_BINARY_HELP) from exc
     stage = Usd.Stage.Open(str(path))
     if stage is None:
-        raise ValueError("Could not open the USD file.")
+        raise ReadError("Could not open the USD file.")
     scale = float(UsdGeom.GetStageMetersPerUnit(stage) or 0.01) * 1000.0
     y_up = UsdGeom.GetStageUpAxis(stage) == UsdGeom.Tokens.y
     pieces = []
@@ -303,7 +336,7 @@ def _fan_triangles(counts: np.ndarray, indices: np.ndarray) -> np.ndarray:
 def _finish_usd(pieces, scale: float, y_up: bool) -> tuple[np.ndarray, np.ndarray]:
     pieces = [(v, f) for v, f in pieces if len(f)]
     if not pieces:
-        raise ValueError("The USD file does not contain any triangles.")
+        raise ReadError("The USD file does not contain any triangles.")
     offset = 0
     all_vertices, all_faces = [], []
     for vertices, faces in pieces:
@@ -493,7 +526,8 @@ def _usda_transform(attrs: dict) -> np.ndarray:
 # ---------------------------------------------------------------- E57 and FBX
 
 E57_HELP = (
-    "E57 scans need the optional reader: install it with 'pip install meshright[e57]'. "
+    "E57 scans need the optional reader. In the downloaded app it is built in; "
+    "with pip, install it with 'pip install meshright[e57]'. "
     "Or export the scan as PLY or XYZ points from your scanning software."
 )
 FBX_HELP = (
@@ -508,7 +542,7 @@ def read_e57(path: str | Path) -> np.ndarray:
     try:
         import pye57
     except ImportError as exc:
-        raise ValueError(E57_HELP) from exc
+        raise ReadError(E57_HELP) from exc
     clouds = []
     e57 = pye57.E57(str(path))
     try:
@@ -520,10 +554,58 @@ def read_e57(path: str | Path) -> np.ndarray:
     finally:
         e57.close()
     if not clouds:
-        raise ValueError("The E57 file holds no points with x, y, z positions.")
+        raise ReadError("The E57 file holds no points with x, y, z positions.")
     points = np.vstack(clouds) * 1000.0  # E57 is in metres
     points = points[np.all(np.isfinite(points), axis=1)]
     if len(points) > MAX_E57_POINTS:
         keep = np.random.default_rng(0).choice(len(points), MAX_E57_POINTS, replace=False)
         points = points[np.sort(keep)]
     return points
+
+
+LAS_HELP = (
+    "LAS and LAZ laser scans need the optional reader. In the downloaded app it is built in; "
+    "with pip, install it with 'pip install meshright[las]'. "
+    "Or export the scan as PLY or XYZ points from your scanning software."
+)
+MAX_LAS_POINTS = 3_000_000
+
+
+def read_las(path: str | Path) -> np.ndarray:
+    """The points of a LAS or LAZ laser scan, in millimetres. Very big scans
+    are thinned evenly to keep the surface build quick."""
+    try:
+        import laspy
+    except ImportError as exc:
+        raise ReadError(LAS_HELP) from exc
+    try:
+        with laspy.open(str(path)) as reader:
+            header = reader.header
+            data = reader.read()
+    except Exception as exc:
+        if "lazrs" in str(exc).lower() or "laszip" in str(exc).lower():
+            raise ReadError(LAS_HELP) from exc
+        raise ReadError("Could not read this LAS file. It may be damaged.") from exc
+    points = np.column_stack([np.asarray(data.x), np.asarray(data.y), np.asarray(data.z)]).astype(np.float64)
+    points = points[np.all(np.isfinite(points), axis=1)]
+    if not len(points):
+        raise ReadError("The LAS file holds no points.")
+    unit = _las_unit_mm(header)
+    points = (points - points.min(axis=0)) * unit  # survey coordinates are huge: start at zero
+    if len(points) > MAX_LAS_POINTS:
+        keep = np.random.default_rng(0).choice(len(points), MAX_LAS_POINTS, replace=False)
+        points = points[np.sort(keep)]
+    return points
+
+
+def _las_unit_mm(header) -> float:
+    """Millimetres per LAS unit: metres unless the file says feet."""
+    try:
+        wkt = header.parse_crs().to_wkt().lower() if header.parse_crs() is not None else ""
+    except Exception:
+        wkt = ""
+    if "us survey foot" in wkt or "foot_us" in wkt:
+        return 304.8006096
+    if "foot" in wkt or "feet" in wkt:
+        return 304.8
+    return 1000.0

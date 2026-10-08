@@ -17,6 +17,7 @@ import trimesh
 
 from . import __version__
 from .document import Document, Step
+from .formats import ReadError, read_zip_member
 
 EXTENSION = ".meshright"
 FORMAT_VERSION = 1
@@ -70,17 +71,19 @@ def _plain(value):
 def load(path: str | Path) -> Document:
     try:
         with zipfile.ZipFile(path) as zf:
-            info = json.loads(zf.read("project.json"))
+            info = json.loads(read_zip_member(zf, "project.json", 10 * 1024 * 1024))
             if not isinstance(info, dict) or not isinstance(info.get("format", 1), int):
                 raise ProjectError("This project file is damaged.")
             if info.get("format", 0) > FORMAT_VERSION:
                 raise ProjectError("This project was saved by a newer MeshRight. Please update MeshRight to open it.")
-            original = _read_mesh(zf.read("original.ply"))
-            current = _read_mesh(zf.read("current.ply")) if "current.ply" in zf.namelist() else None
+            original = _read_mesh(read_zip_member(zf, "original.ply"))
+            current = _read_mesh(read_zip_member(zf, "current.ply")) if "current.ply" in zf.namelist() else None
     except ProjectError:
         raise
     except Exception as exc:
-        raise ProjectError(f"This is not a MeshRight project, or it is damaged ({exc}).") from exc
+        if isinstance(exc, ReadError):
+            raise ProjectError(str(exc)) from exc
+        raise ProjectError("This is not a MeshRight project, or it is damaged.") from exc
     if len(original.faces) == 0:
         raise ProjectError("This project file is damaged: the model is empty.")
 
