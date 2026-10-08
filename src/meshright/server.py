@@ -6,6 +6,7 @@ Runs on the user's own machine. Nothing is uploaded anywhere else.
 from __future__ import annotations
 
 import base64
+import logging
 import os
 import re
 import tempfile
@@ -13,7 +14,7 @@ import threading
 import uuid
 from collections import OrderedDict
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from fastapi import Body, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -44,6 +45,7 @@ LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 EXTRA_HOSTS = {h.strip().lower() for h in os.environ.get("MESHRIGHT_ALLOWED_HOSTS", "").split(",") if h.strip()}
 
 app = FastAPI(title="MeshRight", version=__version__)
+log = logging.getLogger("meshright")
 _documents: OrderedDict[str, Document] = OrderedDict()
 _lock = threading.Lock()
 
@@ -59,11 +61,25 @@ def _host_name(host_header: str) -> str:
 
 @app.exception_handler(Exception)
 async def unexpected_error(request: Request, exc: Exception):
-    """A plain message instead of a bare "Internal Server Error"."""
+    """A plain message instead of a bare "Internal Server Error". The
+    library's own text goes to the log, not the page."""
+    log.exception("Unexpected error on %s", request.url.path, exc_info=exc)
     return JSONResponse(
-        {"detail": f"Something went wrong: {exc}. Please report this, with the file if you can."},
+        {"detail": "Something went wrong with that step. Your model is unchanged. "
+                   "Please report this on GitHub, with the file if you can."},
         status_code=500,
     )
+
+
+def _attachment(filename: str) -> str:
+    """A Content-Disposition header that works for any file name: an ASCII
+    copy for old browsers and the real name encoded for the rest."""
+    ascii_name = filename.encode("ascii", "replace").decode("ascii").replace("?", "_").replace('"', "_")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+
+
+def _stem(name: str) -> str:
+    return re.sub(r"[^\w\-. ]", "_", Path(name).stem).strip() or "model"
 
 
 @app.middleware("http")
@@ -88,7 +104,13 @@ async def only_this_computer(request: Request, call_next):
         length = request.headers.get("content-length", "")
         if length.isdigit() and int(length) > allowed:
             return JSONResponse({"detail": f"File is larger than {MAX_UPLOAD_MB} MB."}, status_code=413)
-    return await call_next(request)
+    response = await call_next(request)
+    # No other website may show MeshRight inside a frame (clickjacking).
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 # ---------------------------------------------------------------- documents
@@ -139,7 +161,8 @@ def _open(path: Path, name: str) -> dict:
     with _lock:
         _documents[doc_id] = doc
         while len(_documents) > MAX_OPEN_DOCUMENTS:
-            _documents.popitem(last=False)
+            old_id, _ = _documents.popitem(last=False)
+            _display_cache.pop(old_id, None)
     state = _state(doc_id, doc)
     if mesh.metadata.get("notice"):
         state["notice"] = mesh.metadata["notice"]
@@ -202,7 +225,7 @@ async def sample(name: str) -> Response:
     if name not in samples.SAMPLES:
         raise HTTPException(status_code=404, detail="There is no sample with that name.")
     filename, data = await run_in_threadpool(samples.make, name)
-    return Response(content=data, media_type="model/stl", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    return Response(content=data, media_type="model/stl", headers={"Content-Disposition": _attachment(filename)})
 
 
 @app.get("/api/settings")
@@ -229,6 +252,56 @@ def save_settings(payload: dict = Body(...)) -> dict:
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Could not save the settings: {exc}") from exc
     return get_settings()
+
+
+# ---------------------------------------------------------------- the AI helper
+
+@app.get("/api/assistant")
+def get_assistant() -> dict:
+    """The AI connection, without the key: the page only learns whether one is saved."""
+    from . import assistant
+
+    config = assistant.load()
+    return {
+        "connected": config is not None,
+        "config": config.public() if config else None,
+        "providers": {k: {kk: v[kk] for kk in ("label", "base_url", "model", "key")} for k, v in assistant.PROVIDERS.items()},
+    }
+
+
+@app.post("/api/assistant")
+def save_assistant(payload: dict = Body(...)) -> dict:
+    from . import assistant
+
+    try:
+        assistant.update(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError:
+        raise HTTPException(status_code=500, detail="Could not save the AI settings on this computer.") from None
+    return get_assistant()
+
+
+@app.delete("/api/assistant")
+def forget_assistant() -> dict:
+    from . import assistant
+
+    assistant.forget()
+    return get_assistant()
+
+
+@app.post("/api/assistant/test")
+async def test_assistant() -> dict:
+    from . import assistant
+
+    config = assistant.load()
+    if config is None:
+        raise HTTPException(status_code=400, detail="Save the AI settings first.")
+    try:
+        answer = await run_in_threadpool(assistant.test, config)
+    except assistant.AssistantError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"message": f"Connected to {config.model}. It said: {answer}"}
 
 
 @app.delete("/api/doc/{doc_id}")
@@ -340,8 +413,34 @@ async def do_action(doc_id: str, payload: dict = Body(...)) -> dict:
         return _state(doc_id, doc)
 
     try:
-        return await run_in_threadpool(work)
+        state = await run_in_threadpool(work)
     except ActionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _get(doc_id)  # closed while it ran: say so instead of a state for nothing
+    return state
+
+
+@app.post("/api/doc/{doc_id}/ask")
+async def ask_assistant(doc_id: str, payload: dict = Body(...)) -> dict:
+    """Ask the connected AI about this model. Only the check report and the
+    list of possible changes are sent, never the model itself. Suggested
+    steps come back checked, and nothing is changed until the user applies them."""
+    from . import assistant
+
+    doc = _get(doc_id)
+    question = payload.get("question") if isinstance(payload, dict) else None
+
+    def work():
+        with doc.lock:
+            mesh, crossing = doc.mesh, doc.crossing()
+            done = [s.receipt for s in doc.steps[: doc.position]]
+        printer = _printer()
+        report = analyze(mesh, crossing=crossing, printer=printer).to_dict()
+        return assistant.ask(str(question or ""), report, done, printer.to_dict() if printer else None)
+
+    try:
+        return await run_in_threadpool(work)
+    except assistant.AssistantError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -455,7 +554,7 @@ async def send_to_slicer(doc_id: str, body: dict = Body(...)) -> dict:
     slicer_id = body.get("slicer") if isinstance(body, dict) else None
     if not isinstance(slicer_id, str):
         raise HTTPException(status_code=400, detail="Choose a slicer.")
-    stem = re.sub(r"[^\w\-. ]", "_", Path(doc.name).stem).strip() or "model"
+    stem = _stem(doc.name)
     data = await run_in_threadpool(lambda: doc.snapshot().export(file_type="3mf"))
     try:
         await run_in_threadpool(slicers.send, slicer_id, f"{stem}-meshright.3mf", data)
@@ -618,21 +717,27 @@ async def current_mesh(doc_id: str) -> Response:
 
 
 @app.get("/api/doc/{doc_id}/export")
-def export(doc_id: str, format: str = "stl") -> Response:
+async def export(doc_id: str, format: str = "stl") -> Response:
     fmt = format.lower()
     if fmt not in EXPORT_FORMATS:
         raise HTTPException(status_code=400, detail=f"Export as one of: {', '.join(EXPORT_FORMATS)}.")
     doc = _get(doc_id)
-    stem = re.sub(r"[^\w\-. ]", "_", Path(doc.name).stem).strip() or "model"
-    filename = f"{stem}-meshright.{fmt}"
-    data = doc.snapshot().export(file_type=fmt)
-    if isinstance(data, str):
-        data = data.encode("utf-8")
-    return Response(
-        content=data,
-        media_type=EXPORT_FORMATS[fmt],
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    filename = f"{_stem(doc.name)}-meshright.{fmt}"
+
+    def work():
+        mesh = doc.snapshot()
+        import numpy as np
+
+        if not np.isfinite(mesh.vertices).all() or np.abs(mesh.vertices).max(initial=0) > 3e38:
+            raise ValueError("The model is too far from the centre or too big to save. Use Put on bed or Set size first.")
+        data = mesh.export(file_type=fmt)
+        return data.encode("utf-8") if isinstance(data, str) else data
+
+    try:
+        data = await run_in_threadpool(work)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=data, media_type=EXPORT_FORMATS[fmt], headers={"Content-Disposition": _attachment(filename)})
 
 
 @app.get("/api/doc/{doc_id}/export-colours")
@@ -645,7 +750,7 @@ async def export_colours(doc_id: str, colours: int = 4) -> Response:
     from . import colour_export
 
     doc = _get(doc_id)
-    stem = re.sub(r"[^\w\-. ]", "_", Path(doc.name).stem).strip() or "model"
+    stem = _stem(doc.name)
     try:
         data, summary = await run_in_threadpool(colour_export.export, doc.snapshot(), colours, stem)
     except ValueError as exc:
@@ -654,7 +759,7 @@ async def export_colours(doc_id: str, colours: int = 4) -> Response:
         content=data,
         media_type=EXPORT_FORMATS["3mf"],
         headers={
-            "Content-Disposition": f'attachment; filename="{stem}-meshright-colours.3mf"',
+            "Content-Disposition": _attachment(f"{stem}-meshright-colours.3mf"),
             "X-Colours": json.dumps(summary),
         },
     )
@@ -666,11 +771,10 @@ def save_project(doc_id: str) -> Response:
     from . import project
 
     doc = _get(doc_id)
-    stem = re.sub(r"[^\w\-. ]", "_", Path(doc.name).stem).strip() or "model"
     return Response(
         content=run_with_lock(doc, project.save),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{stem}{project.EXTENSION}"'},
+        headers={"Content-Disposition": _attachment(f"{_stem(doc.name)}{project.EXTENSION}")},
     )
 
 

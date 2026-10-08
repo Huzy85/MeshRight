@@ -17,4 +17,4 @@ labels: bug
 
 **Your computer**
 - Windows / macOS / Linux:
-- MeshRight version (shown by `meshright --version`):
+- MeshRight version (in the app: press **?** for Help, it is at the bottom; or run `meshright --version`):

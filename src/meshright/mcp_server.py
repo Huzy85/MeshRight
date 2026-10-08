@@ -2,9 +2,12 @@
 and others) can check and fix models on this computer.
 
 Start it with ``meshright mcp``. It talks over stdin/stdout, opens only the
-files it is asked to open, writes fixed copies next to them (never over the
-original) and sends nothing anywhere: the AI app sees the report and the
-receipts, not the model.
+files it is asked to open, writes fixed copies next to them and sends nothing
+anywhere: the AI app sees the report and the receipts, not the model.
+
+Writing: a new file goes next to the original, or where ``out`` says. It
+never replaces the original, and never replaces any other existing file
+unless ``overwrite`` is true. It creates at most one new folder.
 
 The tools are the same actions the buttons use (see ``actions.py``), so an
 assistant can only do what a person could do by clicking.
@@ -13,6 +16,8 @@ assistant can only do what a person could do by clicking.
 from __future__ import annotations
 
 import json
+import shutil
+import sys
 from pathlib import Path
 
 from . import batch, settings
@@ -20,8 +25,8 @@ from .actions import REGISTRY, ActionError, run_action
 from .analysis import SUPPORTED_EXTENSIONS, MeshLoadError, analyze, load_mesh
 
 MCP_HELP = (
-    "The MCP server needs the optional 'mcp' package: install it with "
-    "'pip install meshright[mcp]'."
+    "The MCP server needs the optional 'mcp' package. It is built into the downloaded app; "
+    "if you installed MeshRight with pip, run 'pip install meshright[mcp]'."
 )
 EXPORT_FORMATS = ("3mf", "stl", "obj", "ply")
 
@@ -40,7 +45,7 @@ def _source(path: str) -> Path:
     return source
 
 
-def _target(source: Path, out: str | None, fmt: str) -> Path:
+def _target(source: Path, out: str | None, fmt: str, overwrite: bool = False) -> Path:
     fmt = str(fmt).lower().lstrip(".")
     if fmt not in EXPORT_FORMATS:
         raise ValueError(f"The format must be one of: {', '.join(EXPORT_FORMATS)}.")
@@ -51,6 +56,10 @@ def _target(source: Path, out: str | None, fmt: str) -> Path:
         target = target.with_suffix(f".{fmt}")
     if target.resolve() == source.resolve():
         raise ValueError("The output must not replace the original file.")
+    if target.exists() and not overwrite:
+        raise ValueError(f"{target} already exists. Choose another name, or pass overwrite=true to replace it.")
+    if not target.parent.exists() and not target.parent.parent.is_dir():
+        raise ValueError(f"The folder {target.parent.parent} does not exist.")
     return target
 
 
@@ -62,7 +71,7 @@ def _report(mesh) -> dict:
 
 def _write(mesh, target: Path) -> None:
     data = mesh.export(file_type=target.suffix.lstrip("."))
-    target.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(exist_ok=True)
     target.write_bytes(data.encode("utf-8") if isinstance(data, str) else data)
 
 
@@ -86,15 +95,17 @@ def list_actions() -> list[dict]:
     return [a.describe() for a in REGISTRY.values()]
 
 
-def apply_actions(path: str, actions: list[dict], out: str | None = None, format: str = "3mf") -> dict:
+def apply_actions(path: str, actions: list[dict], out: str | None = None, format: str = "3mf",
+                  overwrite: bool = False) -> dict:
     """Open a model, apply a list of actions in order (each {"name": ...,
     "params": {...}} as described by list_actions) and save the result as a
     new file next to the original (or at ``out``). Returns a receipt for each
     step, the report after, and where the file was written. The original file
-    is never changed."""
+    is never changed, and an existing file is only replaced when
+    ``overwrite`` is true."""
     try:
         source = _source(path)
-        target = _target(source, out, format)
+        target = _target(source, out, format, overwrite)
         mesh = load_mesh(source)
         receipts = []
         for step in actions or []:
@@ -109,14 +120,16 @@ def apply_actions(path: str, actions: list[dict], out: str | None = None, format
 
 
 def fix_model(path: str, out: str | None = None, preset: str = "balanced", solid_if_still_broken: bool = False,
-              best_bottom: bool = False, put_on_bed: bool = True, format: str = "3mf") -> dict:
+              best_bottom: bool = False, put_on_bed: bool = True, format: str = "3mf",
+              overwrite: bool = False) -> dict:
     """Run MeshRight's one-click cleanup on a model file (fill holes, fix
     normals, remove debris, reduce detail per the preset: quick, balanced,
     detail or flexible) and save a fixed copy next to the original. Returns
-    the score before and after, the steps taken and any problems left."""
+    the score before and after, the steps taken and any problems left. An
+    existing file is only replaced when ``overwrite`` is true."""
     try:
         source = _source(path)
-        target = _target(source, out, format)
+        target = _target(source, out, format, overwrite)
         options = batch.Options.from_dict({
             "preset": preset, "solid_if_still_broken": solid_if_still_broken, "best_bottom": best_bottom,
             "put_on_bed": put_on_bed, "format": target.suffix.lstrip("."),
@@ -126,8 +139,11 @@ def fix_model(path: str, out: str | None = None, preset: str = "balanced", solid
     result, data = batch.process_file(source, source.name, options, _printer())
     if not result.ok or data is None:
         return {"file": str(source), "error": result.error or "Could not fix this file."}
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
+    try:
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(data)
+    except OSError as exc:
+        return {"file": str(source), "error": f"Could not save {target}: {exc.strerror or exc}"}
     return {
         "file": str(source), "output": str(target), "score_before": result.score_before,
         "score_after": result.score_after, "ready_to_print": result.ready, "steps": result.steps,
@@ -135,7 +151,7 @@ def fix_model(path: str, out: str | None = None, preset: str = "balanced", solid
     }
 
 
-def export_colours(path: str, out: str | None = None, colours: int = 4) -> dict:
+def export_colours(path: str, out: str | None = None, colours: int = 4, overwrite: bool = False) -> dict:
     """Write a 3MF painted for a multi-colour printer from a colour scan
     (PLY, OBJ with texture, GLB...). The scan's colours are grouped into
     2 to 8 print colours and every triangle is painted, so Bambu Studio,
@@ -145,14 +161,16 @@ def export_colours(path: str, out: str | None = None, colours: int = 4) -> dict:
 
     try:
         source = _source(path)
-        target = _target(source, out, "3mf")
+        if not 2 <= int(colours) <= 8:
+            raise ValueError("The number of colours must be between 2 and 8.")
         if not out:
-            target = target.with_name(f"{source.stem}-meshright-colours.3mf")
+            out = str(source.with_name(f"{source.stem}-meshright-colours.3mf"))
+        target = _target(source, out, "3mf", overwrite)
         data, summary = colour_export.export(load_mesh(source), int(colours), source.stem)
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(data)
     except (MeshLoadError, OSError, ValueError) as exc:
         return {"file": path, "error": str(exc)}
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
     return {"file": str(source), "output": str(target), "colours": summary}
 
 
@@ -192,6 +210,25 @@ def run() -> int:
     return 0
 
 
+def launch_command() -> list[str]:
+    """The command an AI app should run to start this server: the
+    ``meshright`` program if it is on the PATH, otherwise this exact
+    Python (or the packaged app itself)."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "mcp"]
+    found = shutil.which("meshright")
+    if found:
+        return [found, "mcp"]
+    return [sys.executable, "-m", "meshright", "mcp"]
+
+
 def register_hint() -> str:
     """How to add this server to common AI apps."""
-    return json.dumps({"mcpServers": {"meshright": {"command": "meshright", "args": ["mcp"]}}}, indent=2)
+    command, *args = launch_command()
+    config = json.dumps({"mcpServers": {"meshright": {"command": command, "args": args}}}, indent=2)
+    return (
+        "Paste this into your AI app's MCP settings:\n\n" + config + "\n\n"
+        "Claude Desktop: Settings, Developer, Edit Config (claude_desktop_config.json).\n"
+        "Cursor: Settings, MCP, Add new server (or .cursor/mcp.json).\n"
+        f"Claude Code: claude mcp add meshright -- {' '.join(launch_command())}\n"
+    )

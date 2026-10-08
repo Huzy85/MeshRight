@@ -13,7 +13,9 @@ from .actions import REGISTRY, run_action
 _UNKNOWN = object()
 
 # Older steps are dropped beyond this to keep memory in check on big scans.
-# The original is always kept, whatever happens.
+# The original is always kept, whatever happens. Undoing past the oldest kept
+# step lands on the result of the last dropped step (the "base"), not on the
+# original, so undo never jumps over steps the user did not undo.
 MAX_UNDO_STEPS = 20
 
 
@@ -34,6 +36,9 @@ class Document:
     position: int = 0  # how many of the steps are currently applied
     dropped: int = 0  # old steps forgotten to save memory
     original_crossing: object = _UNKNOWN
+    # The mesh before the oldest kept step: the original until steps are dropped.
+    base: trimesh.Trimesh | None = None
+    base_crossing: object = _UNKNOWN
     # Guards this document's steps: one change at a time, and readers take a
     # consistent snapshot (other documents are not held up).
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
@@ -46,7 +51,9 @@ class Document:
 
     @property
     def mesh(self) -> trimesh.Trimesh:
-        return self.steps[self.position - 1].mesh if self.position else self.original
+        if self.position:
+            return self.steps[self.position - 1].mesh
+        return self.original if self.base is None else self.base
 
     @property
     def can_undo(self) -> bool:
@@ -62,7 +69,8 @@ class Document:
         del self.steps[self.position:]  # a new step replaces anything undone
         self.steps.append(step)
         if len(self.steps) > MAX_UNDO_STEPS:
-            self.steps.pop(0)
+            oldest = self.steps.pop(0)
+            self.base, self.base_crossing = oldest.mesh, oldest.crossing
             self.dropped += 1
         self.position = len(self.steps)
         return step
@@ -77,9 +85,13 @@ class Document:
 
     def revert(self) -> None:
         """Back to the file as it was opened. Can itself be undone."""
-        if self.position:
+        if self.mesh is not self.original:
             del self.steps[self.position:]
             self.steps.append(Step("revert", {}, "Back to the original file", self.original))
+            if len(self.steps) > MAX_UNDO_STEPS:
+                oldest = self.steps.pop(0)
+                self.base, self.base_crossing = oldest.mesh, oldest.crossing
+                self.dropped += 1
             self.position = len(self.steps)
 
     def crossing(self):
@@ -87,20 +99,25 @@ class Document:
         when only moves, turns or scaling happened since."""
         from .analysis import find_crossing_faces
 
+        def original():
+            if self.original_crossing is _UNKNOWN:
+                self.original_crossing = find_crossing_faces(self.original)
+            return self.original_crossing
+
         def at(position: int):
             if position == 0:
-                if self.original_crossing is _UNKNOWN:
-                    self.original_crossing = find_crossing_faces(self.original)
-                return self.original_crossing
+                if self.base is not None:
+                    if self.base_crossing is _UNKNOWN:
+                        self.base_crossing = find_crossing_faces(self.base)
+                    return self.base_crossing
+                return original()
             step = self.steps[position - 1]
             if step.crossing is _UNKNOWN:
                 act = REGISTRY.get(step.action)
                 if step.action == "revert":
-                    step.crossing = at(0)
-                elif act is not None and act.keeps_shape and position > 1:
+                    step.crossing = original()
+                elif act is not None and act.keeps_shape:
                     step.crossing = at(position - 1)
-                elif act is not None and act.keeps_shape and self.dropped == 0:
-                    step.crossing = at(0)
                 else:
                     step.crossing = find_crossing_faces(step.mesh)
             return step.crossing

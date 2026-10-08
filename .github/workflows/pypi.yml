@@ -20,16 +20,18 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   check:
+    # Run by hand only from main, so a side branch cannot be released.
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       new: ${{ steps.version.outputs.new }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - id: version
@@ -44,6 +46,8 @@ jobs:
 
   apps:
     needs: check
+    permissions:
+      contents: write
     if: needs.check.outputs.new == 'true'
     uses: ./.github/workflows/release.yml
 
@@ -51,8 +55,10 @@ jobs:
     needs: [check, apps]
     if: needs.check.outputs.new == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Release notes from the changelog
         run: |
           awk -v v="${{ needs.check.outputs.version }}" '
@@ -60,12 +66,12 @@ jobs:
             found { print }
           ' CHANGELOG.md > notes.md
           printf '\nDownload the app for your computer below and double-click it; MeshRight opens in your browser. The apps are not signed yet: on Windows choose More info, then Run anyway; on a Mac, right-click and choose Open the first time. Or install with pip install meshright.\n' >> notes.md
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: MeshRight-*
           path: apps
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ needs.check.outputs.version }}
           name: MeshRight ${{ needs.check.outputs.version }}
@@ -78,13 +84,13 @@ jobs:
     if: needs.check.outputs.new == 'true' || github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - run: python -m pip install build
       - run: python -m build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: python-package
           path: dist/
@@ -97,8 +103,8 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: python-package
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1

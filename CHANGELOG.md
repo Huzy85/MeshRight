@@ -2,6 +2,17 @@
 
 ## 0.2.0
 
+- **Ask AI** (optional): connect any AI service (OpenAI, Claude, Gemini,
+  OpenRouter, DeepSeek, Mistral, Groq, or Ollama and LM Studio on your own
+  computer) and ask about your model. It sees the check report, never the
+  model, and nothing changes until you press Apply. Also `meshright ask`.
+- **LAS and LAZ** scanner point clouds open. The downloaded app now includes
+  the E57, LAS/LAZ and MCP readers.
+- Fixes: undo after 20 steps, plain messages instead of raw errors, size caps
+  on compressed files, MCP never overwrites without `overwrite`, non-Latin
+  file names download, `meshright check` on a folder or a missing file,
+  notices for one-colour and very large files, safer release workflows.
+- README: 60-second start, Ask AI, troubleshooting, privacy, requirements.
 - **Print in colours**: a new Export item, "3MF in colours", groups a colour
   scan into 2 to 8 print colours and writes a 3MF painted for Bambu Studio,
   OrcaSlicer and PrusaSlicer (standard material colours for other viewers).

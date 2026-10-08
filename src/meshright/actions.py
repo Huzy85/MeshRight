@@ -10,6 +10,8 @@ receipt. It never changes the mesh it was given, which is what makes undo safe.
 
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -58,6 +60,7 @@ class Action:
 
 
 REGISTRY: dict[str, Action] = {}
+log = logging.getLogger("meshright")
 
 
 def action(name: str, title: str, description: str, params: list[Param] | None = None, keeps_shape: bool = False):
@@ -66,6 +69,12 @@ def action(name: str, title: str, description: str, params: list[Param] | None =
         return func
 
     return register
+
+
+# No number sent to an action, and no point of a result, may be further than
+# this from the centre (a kilometre). Larger values are typing mistakes and
+# would break the export (infinite coordinates).
+LIMIT_MM = 1_000_000.0
 
 
 def _clean_params(act: Action, raw: dict) -> dict:
@@ -82,8 +91,8 @@ def _clean_params(act: Action, raw: dict) -> dict:
                 value = float(value)
             except (TypeError, ValueError, OverflowError):
                 raise ActionError(f"{p.name} must be a number.") from None
-            if not np.isfinite(value):
-                raise ActionError(f"{p.name} must be a normal number.")
+            if not np.isfinite(value) or abs(value) > LIMIT_MM:
+                raise ActionError(f"{p.name} must be a normal number, between -{LIMIT_MM:g} and {LIMIT_MM:g}.")
             if p.minimum is not None and value < p.minimum:
                 raise ActionError(f"{p.name} must be at least {p.minimum:g}.")
             if p.maximum is not None and value > p.maximum:
@@ -93,7 +102,7 @@ def _clean_params(act: Action, raw: dict) -> dict:
                 value = np.asarray(value, dtype=np.float64)
             except (TypeError, ValueError, OverflowError):
                 raise ActionError(f"{p.name} must be a list of [x, y, z] points.") from None
-            if value.ndim != 2 or value.shape[1] != 3 or not np.all(np.isfinite(value)):
+            if value.ndim != 2 or value.shape[1] != 3 or not np.all(np.isfinite(value)) or np.abs(value).max(initial=0) > LIMIT_MM:
                 raise ActionError(f"{p.name} must be a list of [x, y, z] points.")
             if p.minimum is not None and len(value) < p.minimum:
                 raise ActionError(f"Pick at least {p.minimum:g} points.")
@@ -104,7 +113,7 @@ def _clean_params(act: Action, raw: dict) -> dict:
                 value = np.asarray(value, dtype=np.float64).ravel()
             except (TypeError, ValueError, OverflowError):
                 raise ActionError(f"{p.name} must be a list of numbers.") from None
-            if not np.all(np.isfinite(value)):
+            if not np.all(np.isfinite(value)) or np.abs(value).max(initial=0) > LIMIT_MM:
                 raise ActionError(f"{p.name} must be a list of normal numbers.")
             if p.minimum is not None and len(value) < p.minimum:
                 raise ActionError(f"{p.name} needs at least {p.minimum:g} numbers.")
@@ -130,9 +139,22 @@ def run_action(mesh: trimesh.Trimesh, name: str, params: dict | None = None) -> 
     act = REGISTRY.get(name)
     if act is None:
         raise ActionError(f"Unknown action '{name}'.")
-    result, receipt = act.run(mesh.copy(), **_clean_params(act, params or {}))
+    clean = _clean_params(act, params or {})
+    try:
+        result, receipt = act.run(mesh.copy(), **clean)
+    except (ActionError, MemoryError):
+        raise
+    except Exception as exc:  # geometry libraries fail in many ways on odd shapes
+        log.warning("Action %s failed: %r", name, exc)
+        raise ActionError(
+            f"'{act.title}' could not be done on this model. It may be too thin, too small or too damaged "
+            "for this step. Try Clean up or Make Solid first. Your model is unchanged."
+        ) from exc
     if len(result.faces) == 0:
         raise ActionError("That would leave nothing of the model, so it was not done.")
+    verts = np.asarray(result.vertices)
+    if not np.isfinite(verts).all() or np.abs(verts).max(initial=0) > LIMIT_MM * 10:
+        raise ActionError("That would put the model impossibly far away or make it impossibly big, so it was not done.")
     from .colour import carry
 
     if "scanner" in mesh.metadata:  # where the scan came from stays known
@@ -535,9 +557,10 @@ def thicken(mesh, thickness_mm):
 def merge_scan(mesh, scan, added_points, base_points, fuse):
     from . import merge
 
-    if scan not in merge.PENDING:
+    entry = merge.PENDING.get(scan)
+    if entry is None:
         raise ActionError("That scan is no longer open. Please add it again.")
-    name, added = merge.PENDING[scan]
+    name, added = entry
     try:
         return merge.merge(mesh, added, name, added_points, base_points, fuse)
     except ValueError as exc:
@@ -559,9 +582,10 @@ def merge_scan(mesh, scan, added_points, base_points, fuse):
 def combine_models(mesh, scan, placement, how):
     from . import combine, merge
 
-    if scan not in merge.PENDING:
+    entry = merge.PENDING.get(scan)
+    if entry is None:
         raise ActionError("That model is no longer open. Please add it again.")
-    name, added = merge.PENDING[scan]
+    name, added = entry
     try:
         return combine.combine(mesh, added, name, combine.placement(placement), how)
     except ValueError as exc:

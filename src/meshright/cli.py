@@ -1,4 +1,12 @@
-"""Command line entry point: ``meshright serve`` and ``meshright check``."""
+"""MeshRight: check and fix 3D models and scans for printing.
+
+Commands:
+  serve   open the app in your browser (the default)
+  check   check model files or folders and print a report
+  fix     fix many files or whole folders at once
+  ask     ask your own AI service about a model (optional)
+  mcp     let AI apps such as Claude Desktop use MeshRight's tools
+"""
 
 from __future__ import annotations
 
@@ -15,9 +23,30 @@ from .analysis import SUPPORTED_EXTENSIONS, MeshLoadError, analyze, load_mesh
 SEVERITY_LABELS = {"error": "ERROR  ", "warning": "WARNING", "info": "INFO   "}
 
 
+def _expand(paths: list[str]) -> tuple[list[Path], list[str]]:
+    """Files to work on (folders are opened, their model files taken) and
+    the problems found on the way."""
+    files: list[Path] = []
+    problems: list[str] = []
+    for item in map(Path, paths):
+        if item.is_dir():
+            found = sorted(p for p in item.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS)
+            if not found:
+                problems.append(f"{item}: no model files in this folder.")
+            files += found
+        elif not item.exists():
+            problems.append(f"{item}: file not found.")
+        else:
+            files.append(item)
+    return files, problems
+
+
 def _check(args: argparse.Namespace) -> int:
-    worst = 0
-    for path in args.files:
+    files, problems = _expand(args.files)
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    worst = 2 if problems else 0
+    for path in map(str, files):
         try:
             printer, chosen = settings.load()
             report = analyze(load_mesh(path), printer=printer if chosen else None)
@@ -60,12 +89,9 @@ def _fix(args: argparse.Namespace) -> int:
         shrink_to_fit=not args.no_fit,
         format=args.format,
     )
-    files: list[Path] = []
-    for item in map(Path, args.paths):
-        if item.is_dir():
-            files += sorted(p for p in item.iterdir() if p.suffix.lower() in SUPPORTED_EXTENSIONS)
-        else:
-            files.append(item)
+    files, problems = _expand(args.paths)
+    for problem in problems:
+        print(problem, file=sys.stderr)
     if not files:
         print("No model files found.", file=sys.stderr)
         return 2
@@ -91,7 +117,25 @@ def _fix(args: argparse.Namespace) -> int:
 def _serve(args: argparse.Namespace) -> int:
     import uvicorn
 
-    url = f"http://{args.host}:{args.port}"
+    import socket
+
+    url = f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '::') else args.host}:{args.port}"
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            "Warning: MeshRight has no password. Anyone on your network who can reach this "
+            "address can open and change your models. Only do this on a network you trust, "
+            "and add this computer's name to MESHRIGHT_ALLOWED_HOSTS so other devices are let in.",
+            file=sys.stderr,
+        )
+    family = socket.AF_INET6 if ":" in args.host else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as probe:
+        if probe.connect_ex((args.host if args.host not in ("0.0.0.0", "::") else "127.0.0.1", args.port)) == 0:
+            print(
+                f"Port {args.port} is already in use. MeshRight may already be running: open {url} "
+                "in your browser, or start it on another port with --port 8766.",
+                file=sys.stderr,
+            )
+            return 2
     print(f"MeshRight is running at {url}  (press Ctrl+C to stop)")
     if not args.no_browser:
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
@@ -114,19 +158,63 @@ def _mcp(args: argparse.Namespace) -> int:
         return 2
 
 
+def _ask(args: argparse.Namespace) -> int:
+    from . import assistant
+
+    config = assistant.load()
+    if args.provider or args.model or args.base_url:
+        config = assistant.Config(
+            provider=args.provider or (config.provider if config else "openai"),
+            model=args.model or "",
+            base_url=args.base_url or "",
+            api_key=config.api_key if config and not args.base_url and config.provider == (args.provider or config.provider) else "",
+        )
+    if config is None:
+        print("No AI is connected. Set one up in the app (Ask AI, then AI settings), or pass --provider and "
+              "--model, with the key in the MESHRIGHT_AI_KEY environment variable.", file=sys.stderr)
+        return 2
+    try:
+        config.validate()
+        printer, chosen = settings.load()
+        printer = printer if chosen else None
+        report = analyze(load_mesh(args.file), printer=printer).to_dict()
+        answer = assistant.ask(args.question, report, [], printer.to_dict() if printer else None, config)
+    except (MeshLoadError, OSError, assistant.AssistantError) as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(answer, indent=2))
+        return 0
+    print(answer["reply"])
+    if answer["steps"]:
+        print("\nSuggested steps (open the file in the app to apply them, each can be undone):")
+        for number, step in enumerate(answer["steps"], 1):
+            settings_text = ", ".join(f"{k.replace('_', ' ')}: {v:g}" if isinstance(v, float) else f"{k.replace('_', ' ')}: {v}"
+                                      for k, v in step["params"].items())
+            print(f"  {number}. {step['title']}" + (f" ({settings_text})" if settings_text else ""))
+            if step["why"]:
+                print(f"     {step['why']}")
+    for note in answer["dropped"]:
+        print(f"  Note: {note}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="meshright", description=__doc__)
+    parser = argparse.ArgumentParser(prog="meshright", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--version", action="version", version=f"meshright {__version__}")
+    from .assistant import PROVIDERS
+
     sub = parser.add_subparsers(dest="command")
 
     serve = sub.add_parser("serve", help="open the MeshRight app in your browser")
     serve.add_argument("--host", default="127.0.0.1", help="address to listen on (default: this computer only)")
-    serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--port", type=int, default=8765, help="port to use (default: 8765)")
     serve.add_argument("--no-browser", action="store_true", help="do not open a browser window")
     serve.set_defaults(func=_serve)
 
     check = sub.add_parser("check", help="check mesh files and print a report")
-    check.add_argument("files", nargs="+", help="STL, 3MF, OBJ, PLY, GLB/glTF, OFF, AMF or USD files, or point clouds (XYZ, ASC, PTS, E57)")
+    check.add_argument("files", nargs="+", help="model files or folders: STL, 3MF, OBJ, PLY, GLB/glTF, OFF, AMF or USD, or point clouds (XYZ, ASC, PTS, E57, LAS, LAZ)")
     check.add_argument("--json", action="store_true", help="print the report as JSON")
     check.set_defaults(func=_check)
 
@@ -143,6 +231,15 @@ def main(argv: list[str] | None = None) -> int:
     fix.add_argument("--no-fit", action="store_true", help="do not shrink models that are too big for your printer")
     fix.set_defaults(func=_fix)
 
+    ask = sub.add_parser("ask", help="ask your own AI service about a model (it sees the report, not the model)")
+    ask.add_argument("file", help="the model file")
+    ask.add_argument("question", help='your question in quotes, e.g. "will this print?"')
+    ask.add_argument("--provider", help="AI service to use this time: " + ", ".join(PROVIDERS))
+    ask.add_argument("--model", help="model name to use this time")
+    ask.add_argument("--base-url", help="address of an OpenAI-compatible service")
+    ask.add_argument("--json", action="store_true", help="print the answer as JSON")
+    ask.set_defaults(func=_ask)
+
     mcp = sub.add_parser("mcp", help="serve MeshRight's tools to AI apps over MCP (stdin/stdout)")
     mcp.add_argument("--show-config", action="store_true", help="print the JSON to paste into an AI app's MCP settings")
     mcp.set_defaults(func=_mcp)
@@ -150,7 +247,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.command:
         args = parser.parse_args(["serve"])
-    return args.func(args)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        return 130
+    except Exception as exc:  # a plain sentence, not a traceback
+        print(f"MeshRight stopped with an error: {exc}", file=sys.stderr)
+        print("Please report it at https://github.com/Huzy85/MeshRight/issues", file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":

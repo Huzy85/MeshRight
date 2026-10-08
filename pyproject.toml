@@ -24,9 +24,10 @@ dependencies = [
     "scipy>=1.10",
     "networkx>=3.0",
     "lxml>=4.9",
-    "fastapi>=0.110",
+    "fastapi>=0.115",
+    "starlette>=1.3.1",  # older versions have known denial-of-service bugs
     "uvicorn>=0.27",
-    "python-multipart>=0.0.9",
+    "python-multipart>=0.0.31",  # older versions have known denial-of-service bugs
     "pymeshfix>=0.17",
     "fast-simplification>=0.1.7",
     "PyMCubes>=0.1.4",
@@ -39,6 +40,8 @@ dev = ["pytest>=8", "httpx>=0.27"]
 # and E57 laser-scanner files. Text USD (usda) needs nothing extra.
 usd = ["usd-core>=24.0"]
 e57 = ["pye57>=0.4"]
+# LAS and LAZ laser scans (survey and drone scanners).
+las = ["laspy>=2.5", "lazrs>=0.6"]
 # `meshright mcp`: MeshRight's tools for AI apps (Claude, Cursor and others).
 mcp = ["mcp>=2.3"]
 

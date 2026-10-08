@@ -71,7 +71,13 @@ def test_errors_sorted_first(cube_with_debris, cube_with_hole):
 def test_unit_warning():
     report = analyze(trimesh.creation.box(extents=(0.02, 0.02, 0.02)))
     assert "tiny_model" in codes(report)
-    assert report.score == 100  # info only, no penalty
+    assert not report.printable  # under 1 mm nothing prints, so never "Ready"
+
+
+def test_small_but_printable_is_info_only():
+    report = analyze(trimesh.creation.box(extents=(5, 5, 5)))
+    issue = next(i for i in report.issues if i.code == "tiny_model")
+    assert issue.severity == "info" and report.score == 100
 
 
 @pytest.mark.parametrize(

@@ -718,3 +718,14 @@ kbd {
 #update-text { color: var(--secondary); font-weight: 400; }
 #checklist li .buttons { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
 #open-cancel { flex: none; margin-top: 14px; }
+
+/* Ask AI */
+#ai-dialog, #ai-settings-dialog { width: min(560px, calc(100vw - 32px)); }
+#ai-question, #ai-model, #ai-key, #ai-base { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; border: 1px solid var(--separator); border-radius: 8px; background: var(--surface-solid); color: var(--text); }
+.ai-answer { margin-top: 14px; max-height: 40vh; overflow: auto; }
+.ai-answer p { white-space: pre-wrap; margin: 0 0 10px; }
+.ai-steps { padding-left: 20px; margin: 0; }
+.ai-steps li { margin: 6px 0; }
+.ai-steps label { display: flex; gap: 8px; align-items: flex-start; }
+.ai-steps small { display: block; color: var(--secondary); }
+.link-button { background: none; border: none; color: var(--secondary); text-decoration: underline; margin-right: auto; cursor: pointer; }
