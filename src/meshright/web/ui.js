@@ -126,12 +126,26 @@ $('rail').addEventListener('click', (e) => {
   if (!b || !app.docId) return;
   if (app.busy && b.dataset.do !== 'more' && b.dataset.do !== 'size') return;
   RAIL[b.dataset.do]?.();
+  b.blur();  // the tool bar takes over; no focus ring left behind on the rail
 });
 
+// Which rail button each tool bar belongs to, so the rail shows which tool is on.
+const BAR_TOOL = { 'measure-bar': 'measure', 'piece-bar': 'piece', 'cutter-bar': 'cut', 'hole-bar': 'hole', 'sculpt-bar': 'sculpt', 'pick-bar': 'pick' };
 function updateRail() {
   const more = document.querySelector('#rail [data-do="more"]');
   more.classList.toggle('active', document.body.classList.contains('drawer-open'));
+  const open = document.querySelector('.pill-bar.top:not([hidden])');
+  let tool = open ? BAR_TOOL[open.id] : null;
+  if (open && open.id === 'erase-bar') tool = /the part/.test($('erase-text').textContent) ? 'part' : 'erase';
+  for (const b of document.querySelectorAll('#rail [data-do]')) {
+    if (b.dataset.do !== 'more') b.classList.toggle('active', b.dataset.do === tool);
+  }
 }
+(() => {
+  const obs = new MutationObserver(updateRail);
+  for (const bar of document.querySelectorAll('.pill-bar.top')) obs.observe(bar, { attributes: true, attributeFilter: ['hidden'] });
+  obs.observe($('erase-text'), { childList: true, characterData: true, subtree: true });
+})();
 
 // ---------------------------------------------------------------- the guided card
 
@@ -352,7 +366,13 @@ app.stateListeners.push((state) => {
   cancel.type = 'button';
   cancel.textContent = 'Cancel';
   cancel.addEventListener('click', () => $('open-cancel').click());
-  pill.append(text, cancel);
+  const report = document.createElement('button');
+  report.type = 'button';
+  report.id = 'report-open-pill';
+  report.textContent = 'Report a problem';
+  report.title = 'Send us what happened. You can choose to include the file so we can see why it failed.';
+  report.addEventListener('click', openReport);
+  pill.append(text, cancel, report);
   $('viewer').append(pill);
 
   const sync = () => {
@@ -361,10 +381,12 @@ app.stateListeners.push((state) => {
     if (isSimple() && busy) {
       text.textContent = $('busy-text').textContent;
       cancel.hidden = false;
+      report.hidden = true;
       pill.hidden = false;
     } else if (isSimple() && error && !app.docId) {
       text.textContent = $('error-text').textContent;
       cancel.hidden = true;
+      report.hidden = false;
       pill.hidden = false;
     } else {
       pill.hidden = true;
@@ -646,10 +668,10 @@ const GUIDE = [
     ['Privacy', 'Models are checked and fixed on this computer; nothing is uploaded. Ask AI, if you connect one, sees the check report and never the model. Report a problem only sends your model if you tick the box, and then only to Steam Vibe Ltd to reproduce the fault.', ''],
   ]],
   ['When something goes wrong', [
-    ['The file will not open', 'Check it is one of the listed formats. A zip or a slicer project file (.3mf from a slicer usually opens; .gcode never will). Very big files can take a few minutes; press Cancel if the computer slows down and try Quick print on a smaller version.', ''],
+    ['The file will not open', 'Check it is one of the listed formats. A zip or a slicer project file (.3mf from a slicer usually opens; .gcode never will). Very big files can take a few minutes; press Cancel if the computer slows down and try Quick print on a smaller version. If a good file still refuses, press Report a problem on the message and tick the box to include the file, so we can see why.', ''],
     ['Clean up did not fix it', 'Some scans are too broken to patch hole by hole. Try Make Solid, which rebuilds the whole model. For a surface with no inside, use Give it thickness first.', ''],
     ['The model looks wrong after a fix', 'Press Ctrl+Z. Turn on Show what changed under History to see exactly what moved. Then try a gentler preset, or fix one thing at a time.', ''],
-    ['Report a problem', 'Press Report a problem at the bottom right. MeshRight gathers the last error messages, the steps you took, the version and your browser into a small report file in your Downloads folder and opens an email to support@steamvibe.com. Your model is only included if you tick the box.', 'Bottom right of the model.'],
+    ['Report a problem', 'Press Report a problem at the bottom right of the model, in Help under About, or on the message when a file will not open. MeshRight gathers the last error messages, the steps you took, the version and your browser into a small report file in your Downloads folder and opens an email to support@steamvibe.com. Your model is only included if you tick the box.', 'Bottom right of the model, or Help then About.'],
     ['Ask AI', 'Optional. Connect an AI service you already use, or one that runs on this computer such as Ollama or LM Studio, and ask in your own words: will this print, what is wrong, make it 15 cm tall. It sees the check report, never the model, and only suggests steps; nothing happens until you press Apply.', 'Ask AI at the top of the window.'],
   ]],
 ];
@@ -720,14 +742,28 @@ function openReport() {
   $('report-model').checked = false;
   $('report-model-size').textContent = '';
   const consent = dialog.querySelector('.consent');
-  consent.hidden = !app.docId;
+  const failed = !app.docId && app.lastFailedFile;
+  consent.hidden = !app.docId && !failed;
+  consent.querySelector('strong').textContent = failed ? 'Also include the file that would not open' : 'Also include my model file';
+  consent.querySelector('small').textContent = failed
+    ? `${app.lastFailedFile.name}, ${app.lastFailedFile.size < 100 * 1024 ? 'under 0.1' : app.fmt(app.lastFailedFile.size / 1024 / 1024, 1)} MB. Without it we can only guess why it failed. Optional and off until you tick it.`
+    : 'Most faults can only be reproduced with the model. It is optional and off until you tick it.';
   $('report-includes').lastElementChild.hidden = !app.docId;
   if (!dialog.open) dialog.showModal();
   setTimeout(() => $('report-note').focus(), 50);
 }
 $('report-open').addEventListener('click', openReport);
+$('report-open-error').addEventListener('click', openReport);
+$('error-retry').addEventListener('click', () => $('file-input').click());
+$('report-open-about').addEventListener('click', () => { $('help-dialog').close(); openReport(); });
 
 $('report-model').addEventListener('change', async (e) => {
+  if (e.target.checked && !app.docId && app.lastFailedFile) {
+    const mb = app.lastFailedFile.size / 1024 / 1024;
+    $('report-big').hidden = mb <= 20;
+    if (mb > 20) $('report-big').textContent = `The file is ${app.fmt(mb, 0)} MB. Many email services refuse attachments over 20 to 25 MB. Send the report without it if the email bounces, and we will reply with a link to upload the file instead.`;
+    return;
+  }
   if (!e.target.checked || !app.docId) { $('report-big').hidden = true; return; }
   if (modelFor !== app.docId || !modelBlob) {
     $('report-model-size').textContent = '(getting the size…)';
@@ -793,7 +829,7 @@ function buildReport(note) {
     ...(app.errorLog.length ? app.errorLog.map((e) => `  ${e.at}  ${e.text}`) : ['  none']),
     '',
     'Model:',
-    ...describeState(app.lastState),
+    ...(app.lastState ? describeState(app.lastState) : [app.lastFailedFile ? `No model open. The last file that would not open: ${app.lastFailedFile.name} (${app.lastFailedFile.size} bytes)` : 'No model open.']),
     '',
   ];
   return lines.join('\n');
@@ -879,12 +915,16 @@ $('report-send').addEventListener('click', async () => {
   const errorLine = $('report-error');
   errorLine.hidden = true;
   const note = $('report-note').value.trim();
-  const includeModel = $('report-model').checked && app.docId;
+  const failedFile = !app.docId && app.lastFailedFile;
+  const includeModel = $('report-model').checked && (app.docId || failedFile);
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   const zipName = `meshright-report-${stamp}.zip`;
   try {
     const files = [{ name: 'report.txt', bytes: new TextEncoder().encode(buildReport(note)) }];
-    if (includeModel) {
+    if (includeModel && failedFile) {
+      const safe = failedFile.name.replace(/[^\w.-]+/g, '_') || 'file';
+      files.push({ name: safe, bytes: new Uint8Array(await failedFile.arrayBuffer()) });
+    } else if (includeModel) {
       if (modelFor !== app.docId || !modelBlob) {
         const res = await fetch(`api/doc/${app.docId}/export?format=3mf`);
         if (!res.ok) throw new Error('Could not read the model to include it.');
@@ -904,12 +944,12 @@ $('report-send').addEventListener('click', async () => {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
 
-    const subject = `MeshRight problem: ${(app.lastState?.name || 'no model').slice(0, 60)}`;
+    const subject = `MeshRight problem: ${(app.lastState?.name || failedFile?.name || 'no model').slice(0, 60)}`;
     const bodyText = [
       note || '(describe what happened here)',
       '',
       `Please attach ${zipName} from your Downloads folder before sending.`,
-      includeModel ? 'It contains the report and my model file.' : 'It contains the report only (no model).',
+      includeModel ? (failedFile ? 'It contains the report and the file that would not open.' : 'It contains the report and my model file.') : 'It contains the report only (no model).',
       '',
       `MeshRight ${$('app-version').textContent || ''}`,
     ].join('\n');
