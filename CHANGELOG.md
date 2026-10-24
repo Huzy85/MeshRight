@@ -1,5 +1,22 @@
 # Changes
 
+## 0.2.1
+
+- **Hollow for resin is much more reliable.** The hollowed shell now stays
+  closed when saved as STL, keeps your wall thickness, and works on models
+  that have a shell inside a shell or a ring shape. Pockets that would trap
+  resin are found and given extra drain holes. Tiny specks that smoothing used
+  to pinch off a pocket are ignored.
+- **Fewer false alarms.** The self-crossing check no longer flags triangles
+  whose corners sit a rounding step apart (drain holes were triggering it, and
+  scores dropped from 94 to 59 for no reason). A hollowed model's inner wall
+  is no longer called floating debris.
+- **Cleanup removes zero-area triangles** without opening the surface, and
+  says when it leaves a big opening alone because it looks like the model's own
+  open edge (tick "Also close a big opening" to close it).
+- Tested on real scans (Stanford bunny, horse, angel, dragon, happy Buddha) and
+  ten community models: all clean up and hollow to one closed solid.
+
 ## 0.2.0
 
 - **Ask AI** (optional): connect any AI service (OpenAI, Claude, Gemini,
