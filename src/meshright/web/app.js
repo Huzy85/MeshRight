@@ -268,7 +268,7 @@ function fixTip(fix) {
     add_flat_base: 'Adds a thin flat plate under the model so it stands up',
     thicken: 'Gives a flat or paper-thin surface real thickness so it can be printed',
     split_to_fit: 'Cuts it into parts that each fit the bed, with pins so they glue back together lined up',
-    decimate: 'Simplifies the mesh so slicers load it quickly. Fine detail is kept where it matters.',
+    reduce_detail: 'Simplifies the mesh so slicers load it quickly. Fine detail is kept where it matters.',
     cleanup: 'Shows a plan of the fixes first. Nothing changes until you press Clean up in the plan.',
   };
   if (fix.action === 'scale') return /^Saved in/.test(fix.label) ? 'The file was saved in other units, so it came in the wrong size. This scales it to what it should be.' : 'Scales the model down until it fits the bed';
