@@ -32,6 +32,13 @@ def scan_with_problems():
 
 # ---------------------------------------------------------------- self-crossing detector
 
+def test_corners_a_rounding_step_apart_count_as_touching():
+    # Two triangles meeting at a point the file lists twice, 2e-7 apart: they touch, they do not cut.
+    vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, -1], [0, 0, 2e-7], [-1, 0, -1]], dtype=float)
+    faces = np.array([[0, 1, 2], [3, 4, 5]])
+    assert len(crossing_pairs(vertices, faces)) == 0
+
+
 def test_crossing_detector_simple_case():
     vertices = np.array([[0, 0, 0], [2, 0, 0], [0, 2, 0], [0.5, 0.5, -1], [0.5, 0.5, 1], [1.5, 0.5, 0]], float)
     faces = np.array([[0, 1, 2], [3, 4, 5]])
@@ -121,8 +128,9 @@ def test_cleanup_leaves_open_outline_of_a_relief():
     assert len(plan.holes) == 1 and not plan.holes[0].fill
     step = next(s for s in plan.steps() if s["key"] == "close_open_edge")
     assert step["checked"] is False
-    kept, _ = run_action(dish, "cleanup")
+    kept, receipt = run_action(dish, "cleanup")
     assert not kept.is_watertight
+    assert "looks like the model's own open edge" in receipt
     closed, _ = run_action(dish, "cleanup", {"close_open_edge": True})
     assert closed.is_watertight
 
@@ -253,6 +261,103 @@ def test_hollow_for_resin():
     assert "drain holes" in receipt
 
 
+def _lumpy_blob(seed: int = 1) -> trimesh.Trimesh:
+    """A smooth organic shape like a scan: a sphere pushed in and out by a few waves."""
+    rng = np.random.default_rng(seed)
+    blob = trimesh.creation.icosphere(5, radius=1)
+    push = np.zeros(len(blob.vertices))
+    for _ in range(6):
+        axis = rng.normal(size=3)
+        axis /= np.linalg.norm(axis)
+        push += rng.uniform(-1, 1) * np.sin(blob.vertices @ axis * rng.uniform(2, 5) + rng.uniform(0, 6))
+    blob.vertices = blob.vertices * (1 + push / 3)[:, None]
+    blob.apply_scale(rng.uniform(25, 40, 3))
+    return blob
+
+
+def test_hollow_keeps_the_shell_closed_on_organic_models():
+    """The Boolean result used to be run through a vertex merge that welded
+    points together and left open edges once drain holes were cut."""
+    blob = _lumpy_blob()
+    for drain in (True, False):
+        mesh, receipt = run_action(blob, "hollow", {"wall_mm": 2, "drain_holes": drain})
+        assert mesh.is_watertight and mesh.is_winding_consistent
+        assert len(mesh.split(only_watertight=False)) == (1 if drain else 2)  # a sealed void without drains
+        assert "could not be drained" not in receipt
+
+
+def test_hollow_drains_a_ring_shaped_model():
+    ring = trimesh.creation.torus(major_radius=30, minor_radius=12)
+    mesh, receipt = run_action(ring, "hollow", {"wall_mm": 2})
+    assert mesh.is_watertight and len(mesh.split(only_watertight=False)) == 1
+    assert "could not be drained" not in receipt
+
+
+def _through_stl(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    import io
+
+    return trimesh.load(io.BytesIO(mesh.export(file_type="stl")), file_type="stl")
+
+
+def test_hollow_survives_being_saved_as_stl():
+    mesh, _ = run_action(_lumpy_blob(3), "hollow", {"wall_mm": 2})
+    assert _through_stl(mesh).is_watertight
+
+
+def test_hollow_walls_are_at_least_as_thick_as_asked():
+    from scipy.spatial import cKDTree
+
+    blob = _lumpy_blob(2)
+    mesh, _ = run_action(blob, "hollow", {"wall_mm": 2, "drain_holes": False})
+    inner = max(mesh.split(only_watertight=False), key=lambda p: -p.volume)  # the void has negative volume
+    outer_points = trimesh.sample.sample_surface(blob, 200000, seed=1)[0]
+    assert cKDTree(outer_points).query(inner.vertices)[0].min() >= 1.9
+
+
+def test_hollow_keeps_a_shell_inside_a_shell():
+    outer = trimesh.creation.icosphere(4, radius=30)
+    core = trimesh.creation.icosphere(3, radius=8)
+    both = trimesh.util.concatenate([outer, core])
+    mesh, _ = run_action(both, "hollow", {"wall_mm": 2, "drain_holes": False})
+    assert mesh.is_watertight
+    assert _through_stl(mesh).is_watertight
+
+
+def test_hollow_without_drain_holes_adds_none():
+    mesh, receipt = run_action(trimesh.creation.icosphere(4, radius=30), "hollow", {"wall_mm": 2, "drain_holes": False})
+    assert "drain hole" not in receipt
+
+
+def test_hollow_leaves_no_sealed_pocket_in_a_model_with_two_chambers():
+    low = trimesh.creation.icosphere(3, radius=20)
+    high = trimesh.creation.icosphere(3, radius=15)
+    high.apply_translation([0, 0, 45])
+    neck = trimesh.creation.cylinder(radius=6, height=30, sections=48)
+    neck.apply_translation([0, 0, 22])
+    shape = trimesh.boolean.union([low, high, neck], engine="manifold")
+    mesh, receipt = run_action(shape, "hollow", {"wall_mm": 2})
+    assert "could not be drained" not in receipt
+    assert all(part.volume > 0 for part in mesh.split(only_watertight=False))
+
+
+def test_hollow_ignores_specks_pinched_off_a_pocket():
+    from meshright.repair import _drop_small_pockets
+
+    cavity = np.zeros((60, 60, 60), dtype=bool)
+    cavity[5:35, 5:35, 5:35] = True       # big pocket
+    cavity[45:48, 45:48, 45:48] = True    # speck far from it
+    kept = _drop_small_pockets(cavity, pitch=1.0, min_mm3=100.0)
+    assert kept[20, 20, 20] and not kept[46, 46, 46]
+
+
+def test_hollow_keeps_a_lone_small_pocket():
+    from meshright.repair import _drop_small_pockets
+
+    cavity = np.zeros((20, 20, 20), dtype=bool)
+    cavity[5:12, 5:12, 5:12] = True
+    assert _drop_small_pockets(cavity, pitch=1.0, min_mm3=1000.0).sum() == cavity.sum()
+
+
 def test_hollow_refuses_thin_models():
     with pytest.raises(ActionError, match="too thin"):
         run_action(trimesh.creation.box(extents=(20, 20, 3)), "hollow", {"wall_mm": 2})
@@ -273,6 +378,23 @@ def test_crossing_repair_never_throws_away_the_shape(monkeypatch):
     ball = trimesh.creation.icosphere(subdivisions=3, radius=10)
     # Pretend MeshFix's repair and the local repair both wreck the piece.
     monkeypatch.setattr(repair, "_from_meshfix", lambda tin: trimesh.creation.icosphere(radius=2))
-    monkeypatch.setattr(repair, "_local_fix", lambda piece, bad: None)
+    monkeypatch.setattr(repair, "_local_fix", lambda piece, bad, rings=2: None)
     kept = repair._fix_piece(ball, np.array([0, 1]))
     assert kept is ball
+
+
+def test_zero_area_triangles_are_removed_without_opening_the_surface():
+    from meshright.repair import _collapse_slivers
+
+    mesh = trimesh.creation.icosphere(subdivisions=2)
+    a, b, c = mesh.faces[0]
+    verts = np.vstack([mesh.vertices, (mesh.vertices[a] + mesh.vertices[b]) / 2])
+    mid = len(verts) - 1
+    # split a-b on one side only; the needle (a, mid, b) lies on the line and closes the gap
+    faces = np.vstack([mesh.faces[1:], [[a, mid, c], [mid, b, c], [a, mid, b]]])
+    needle = trimesh.Trimesh(verts, faces, process=False)
+    assert needle.is_watertight
+    assert (needle.area_faces <= 1e-12).sum() == 1
+    out = _collapse_slivers(needle)
+    assert out.is_watertight
+    assert (out.area_faces > 1e-12).all()

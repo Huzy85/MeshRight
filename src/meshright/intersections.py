@@ -110,17 +110,38 @@ def _edge_hits(tri_edges: np.ndarray, tri: np.ndarray) -> np.ndarray:
     return hit
 
 
+def _shared_corners(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """Corner ids per face where points at the same spot share one id, even when the file
+    lists them twice or they differ by a rounding step (a 32-bit STL cannot tell them apart)."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+
+    used = np.unique(faces)
+    points = vertices[used]
+    reach = 1e-6 * max(float(np.ptp(points, axis=0).max()), 1e-12)
+    pairs = cKDTree(points).query_pairs(reach, output_type="ndarray")
+    if len(pairs) == 0:
+        return faces
+    graph = coo_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])), shape=(len(points),) * 2)
+    _, label = connected_components(graph, directed=False)
+    ids = np.zeros(len(vertices), dtype=np.int64)
+    ids[used] = label
+    return ids[faces]
+
+
 def crossing_pairs(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
     """Pairs of face indices (k, 2) whose triangles cut through each other."""
     if len(faces) < 2:
         return np.zeros((0, 2), dtype=np.int64)
     triangles = np.asarray(vertices, dtype=np.float64)[faces]
     a, b = _candidate_pairs(triangles)
+    corners = _shared_corners(np.asarray(vertices, dtype=np.float64), faces)
 
     found = []
     for start in range(0, len(a), BATCH):
         ia, ib = a[start:start + BATCH], b[start:start + BATCH]
-        fa, fb = faces[ia], faces[ib]
+        fa, fb = corners[ia], corners[ib]
         shares_corner = (fa[:, :, None] == fb[:, None, :]).any(axis=(1, 2))
         ia, ib = ia[~shares_corner], ib[~shares_corner]
         if len(ia) == 0:

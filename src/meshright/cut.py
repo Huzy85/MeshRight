@@ -45,7 +45,9 @@ def _to_manifold(mesh: trimesh.Trimesh):
 
 def _to_mesh(solid) -> trimesh.Trimesh:
     result = solid.to_mesh()
-    return trimesh.Trimesh(np.asarray(result.vert_properties)[:, :3], np.asarray(result.tri_verts), process=True)
+    # manifold3d returns a closed shell with its own vertex list. Letting trimesh
+    # merge vertices again welds nearby points together and tears that shell open.
+    return trimesh.Trimesh(np.asarray(result.vert_properties)[:, :3], np.asarray(result.tri_verts), process=False)
 
 
 def _affine(rotation: np.ndarray, offset=(0, 0, 0)) -> list:
