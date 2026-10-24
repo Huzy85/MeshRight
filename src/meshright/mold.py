@@ -241,57 +241,91 @@ def _split_halves(
         raise MoldError(f"Could not split mold at parting plane: {e}") from e
 
 
+# Each feature below is cut with a boolean that can fail on awkward geometry.
+# A failure never stops the mold: the feature is left out and a plain note
+# goes in ``notes`` so the receipt tells the user what to do by hand.
+
+
+def _note(notes: list[str] | None, text: str) -> None:
+    if notes is not None and text not in notes:
+        notes.append(text)
+
+
+def _plane_frame(half: trimesh.Trimesh, n: np.ndarray, offset: float, tol: float = 2.0):
+    """Where things go on a half's parting face: its centre, two in-plane
+    axes u and v, and the face's width along each. None if the half has no
+    vertices near the plane.
+
+    The centre is the middle of the face's extent, not the mean of its
+    vertices: a dense cavity rim or a pin already added would drag a mean
+    off to one side and push the next feature out through the wall.
+    """
+    verts = np.asarray(half.vertices, dtype=np.float64)
+    heights = verts @ n
+    on_plane = np.abs(heights - offset) < tol
+    if not on_plane.any():
+        return None
+    plane_verts = verts[on_plane]
+    u = np.array([1.0, 0.0, 0.0]) if abs(n[2]) > 0.9 else np.cross(n, [0, 0, 1.0])
+    u /= np.linalg.norm(u)
+    v = np.cross(n, u)
+    pu, pv = plane_verts @ u, plane_verts @ v
+    center = n * offset + u * (pu.max() + pu.min()) / 2 + v * (pv.max() + pv.min()) / 2
+    return center, u, v, float(pu.max() - pu.min()), float(pv.max() - pv.min())
+
+
+def _frame_matrix(x: np.ndarray, y: np.ndarray, z: np.ndarray, origin: np.ndarray) -> np.ndarray:
+    """A transform that maps a primitive's local x, y, z axes onto these
+    directions and its origin onto this point."""
+    matrix = np.eye(4)
+    matrix[:3, 0], matrix[:3, 1], matrix[:3, 2], matrix[:3, 3] = x, y, z, origin
+    return matrix
+
+
 def _add_bolt_holes(
     half: trimesh.Trimesh,
     axis: np.ndarray,
     offset: float,
     bolt_dia: float = 4.5,
     n_bolts: int = 4,
+    notes: list[str] | None = None,
+    which: str = "a",
 ) -> trimesh.Trimesh:
     """Drill bolt holes through the parting-face region for clamping."""
     n = axis / np.linalg.norm(axis)
-    verts = np.asarray(half.vertices, dtype=np.float64)
-    on_plane = np.abs((verts @ n) - offset) < 2.0
-    if not on_plane.any():
+    frame = _plane_frame(half, n, offset)
+    if frame is None:
+        _note(notes, f"Bolt holes were not cut in the {which} half (no flat parting face found); clamp it instead.")
         return half
-
-    plane_verts = verts[on_plane]
-    u = np.array([1.0, 0.0, 0.0]) if abs(n[2]) > 0.9 else np.cross(n, [0, 0, 1.0])
-    u /= np.linalg.norm(u)
-    v = np.cross(n, u)
-
-    pu = plane_verts @ u
-    pv = plane_verts @ v
-    u_mid = (pu.max() + pu.min()) / 2
-    v_mid = (pv.max() + pv.min()) / 2
-    u_r = (pu.max() - pu.min()) * 0.38
-    v_r = (pv.max() - pv.min()) * 0.38
-
-    corners = [
-        u_mid + u_r * su + 0 * v_mid for su in (-1, 1)
-    ]
+    center, u, v, width_u, width_v = frame
+    u_r, v_r = width_u * 0.38, width_v * 0.38
     bolt_locs = [
-        plane_verts.mean(axis=0) + u * u_r * su + v * v_r * sv
+        center + u * u_r * su + v * v_r * sv
         for su in (-1, 1) for sv in (-1, 1)
     ][:n_bolts]
 
     mold_h = np.asarray(half.vertices, dtype=np.float64) @ n
     mold_depth = mold_h.max() - mold_h.min() + 2.0
 
-    half_m = _to_manifold(half)
+    failed = f"Bolt holes could not be cut in the {which} half; drill them after printing or use the clamp."
+    try:
+        half_m = _to_manifold(half)
+    except Exception:
+        _note(notes, failed)
+        return half
     for loc in bolt_locs:
         hole = trimesh.creation.cylinder(radius=bolt_dia / 2, height=mold_depth, sections=12)
-        hole_center = loc - n * (mold_h.max() - mold_h.min()) / 2 + n * (mold_h.max() - offset)
-        # Position: run through the mold half perpendicular to parting plane
-        hole.apply_translation(loc + n * (mold_h.min() + mold_depth / 2 - 1.0))
+        # Right through the half, perpendicular to the parting plane.
+        hole.apply_transform(_frame_matrix(u, v, n, loc + n * ((mold_h.min() + mold_h.max()) / 2 - offset)))
         try:
             half_m = half_m - _to_manifold(hole)
         except Exception:
-            pass
+            _note(notes, f"Not every bolt hole could be cut in the {which} half; drill the missing ones after printing.")
 
     try:
         return _to_mesh(half_m)
     except Exception:
+        _note(notes, failed)
         return half
 
 
@@ -302,58 +336,59 @@ def _add_alignment_pins(
     offset: float,
     pin_dia: float = 4.0,
     pin_height: float = 6.0,
+    notes: list[str] | None = None,
 ) -> tuple[trimesh.Trimesh, trimesh.Trimesh]:
-    """Add alignment pin stubs to pos half, matching holes to neg half."""
+    """Add alignment pin stubs to the pos half (the one on the +axis side of
+    the parting plane) and matching, slightly wider holes to the neg half."""
+    failed = "Alignment pins could not be added; line the halves up by their outer edges before clamping."
     n = axis / np.linalg.norm(axis)
-    verts = np.asarray(pos.vertices, dtype=np.float64)
-    on_plane = np.abs((verts @ n) - offset) < 2.0
-    if not on_plane.any():
+    frame = _plane_frame(pos, n, offset)
+    if frame is None:
+        _note(notes, failed)
+        return pos, neg
+    center, u, v, width_u, width_v = frame
+
+    # One pin on the negative side of each in-plane axis, in the middle of
+    # the wall. The corners belong to the bolt holes and the positive sides
+    # of the axes to the air vents, so the pins never collide with either
+    # (they used to sit 2 mm from the bolt holes, which drilled them away).
+    pin_locs = [center - u * width_u * 0.42, center - v * width_v * 0.42]
+
+    try:
+        pos_m = _to_manifold(pos)
+        neg_m = _to_manifold(neg)
+    except Exception:
+        _note(notes, failed)
         return pos, neg
 
-    plane_verts = verts[on_plane]
-    u = np.array([1.0, 0.0, 0.0]) if abs(n[2]) > 0.9 else np.cross(n, [0, 0, 1.0])
-    u /= np.linalg.norm(u)
-    v = np.cross(n, u)
-
-    pu = plane_verts @ u
-    pv = plane_verts @ v
-    pin_locs = [
-        plane_verts.mean(axis=0) + u * (pu.max() - pu.min()) * 0.35 * su
-                                 + v * (pv.max() - pv.min()) * 0.35 * sv
-        for su, sv in ((-1, -1), (1, 1))
-    ]
-
-    pos_m = _to_manifold(pos)
-    neg_m = _to_manifold(neg)
-
     for loc in pin_locs:
-        # Pin on the pos half: stub pointing in -n direction (into neg half)
-        pin = trimesh.creation.cylinder(radius=pin_dia / 2, height=pin_height, sections=16)
-        pin.apply_translation(loc - n * (pin_height / 2 + 0.1))
+        # The pin stands on the pos half's parting face and reaches into the
+        # neg half's space (the -n side). It starts a touch above the face so
+        # the union has material to grab.
+        pin = trimesh.creation.cylinder(radius=pin_dia / 2, height=pin_height + 0.2, sections=16)
+        pin.apply_transform(_frame_matrix(u, v, n, loc - n * (pin_height / 2 - 0.1)))
 
-        # Hole in the neg half: slightly wider for clearance
+        # The hole is cut into the neg half on the same side, a little
+        # wider and deeper than the pin so the halves close fully.
         hole = trimesh.creation.cylinder(radius=pin_dia / 2 + 0.15, height=pin_height + 1.0, sections=16)
-        hole.apply_translation(loc + n * (pin_height / 2 + 0.1))
+        hole.apply_transform(_frame_matrix(u, v, n, loc - n * (pin_height / 2 + 0.3)))
 
+        # A pin without its hole (or the other way round) would stop the
+        # halves closing, so both are added or neither is. (manifold3d
+        # spells union as +; | is not defined and failed silently before.)
         try:
-            pos_m = pos_m | _to_manifold(pin)
+            new_pos = pos_m + _to_manifold(pin)
+            new_neg = neg_m - _to_manifold(hole)
         except Exception:
-            pass
-        try:
-            neg_m = neg_m - _to_manifold(hole)
-        except Exception:
-            pass
+            _note(notes, "Not every alignment pin could be added; check the halves line up before clamping.")
+            continue
+        pos_m, neg_m = new_pos, new_neg
 
     try:
-        pos = _to_mesh(pos_m)
+        return _to_mesh(pos_m), _to_mesh(neg_m)
     except Exception:
-        pass
-    try:
-        neg = _to_mesh(neg_m)
-    except Exception:
-        pass
-
-    return pos, neg
+        _note(notes, failed)
+        return pos, neg
 
 
 def _add_pour_spout(
@@ -362,25 +397,38 @@ def _add_pour_spout(
     offset: float,
     top_dia: float = 10.0,
     bot_dia: float = 4.0,
+    notes: list[str] | None = None,
 ) -> trimesh.Trimesh:
-    """Drill a tapered pour hole through the top of the positive mold half."""
+    """Drill a funnel-shaped pour hole through the top of the positive mold
+    half: ``top_dia`` wide at the outside, narrowing towards the cavity,
+    and never narrower than ``bot_dia`` where it meets the cavity."""
     n = axis / np.linalg.norm(axis)
-    verts = np.asarray(top.vertices, dtype=np.float64)
-    top_z = float((verts @ n).max())
-    bot_z = float((verts @ n).min())
-    height = top_z - bot_z + 1.0
+    frame = _plane_frame(top, n, offset)
+    if frame is None:
+        _note(notes, "The pour hole could not be cut; drill one through the top half into the cavity before casting.")
+        return top
+    center, u, v, _, _ = frame
+    outer = float((np.asarray(top.vertices, dtype=np.float64) @ n).max())  # the outside face
+    depth = outer - offset
+    if depth <= 0.5:
+        _note(notes, "The pour hole could not be cut; drill one through the top half into the cavity before casting.")
+        return top
 
-    # Center the spout over the part cavity
-    center_xy = np.asarray(top.bounds).mean(axis=0)
-    center_xy = center_xy - n * (center_xy @ n)
-    spout_center = center_xy + n * ((top_z + bot_z) / 2)
-
-    spout = trimesh.creation.cone(radius=top_dia / 2, height=height, sections=20)
-    spout.apply_translation(spout_center)
+    # A cone with its wide base a little above the outside face and its tip
+    # at the parting plane: it passes through the cavity, so it only removes
+    # wall, and the hole is widest where the resin goes in. A plain bore of
+    # bot_dia runs the same way so the hole never pinches shut on a tall
+    # half. Primitive axes: x -> u, y -> v, z -> n.
+    cone = trimesh.creation.cone(radius=top_dia / 2, height=depth + 1.0, sections=20)
+    cone.apply_transform(_frame_matrix(u, v, -n, center + n * (outer + 1.0)))
+    bore = trimesh.creation.cylinder(radius=bot_dia / 2, height=depth + 2.0, sections=16)
+    bore.apply_transform(_frame_matrix(u, v, n, center + n * (depth / 2)))
 
     try:
-        return _to_mesh(_to_manifold(top) - _to_manifold(spout))
+        spout = _to_manifold(cone) + _to_manifold(bore)
+        return _to_mesh(_to_manifold(top) - spout)
     except Exception:
+        _note(notes, "The pour hole could not be cut; drill one through the top half into the cavity before casting.")
         return top
 
 
@@ -390,42 +438,44 @@ def _add_vent_channels(
     offset: float,
     channel_w: float = 1.5,
     channel_d: float = 0.8,
+    notes: list[str] | None = None,
 ) -> trimesh.Trimesh:
     """Carve small air-vent grooves in the parting face so trapped air escapes when pouring."""
+    failed = "Air vents could not be cut; scratch two shallow grooves across the parting face so air can escape."
     n = axis / np.linalg.norm(axis)
-    verts = np.asarray(half.vertices, dtype=np.float64)
-    on_plane = np.abs((verts @ n) - offset) < 1.0
-    if not on_plane.any():
+    frame = _plane_frame(half, n, offset)
+    if frame is None:
+        _note(notes, failed)
         return half
+    center, u, v, width_u, width_v = frame
 
-    plane_verts = verts[on_plane]
-    u = np.array([1.0, 0.0, 0.0]) if abs(n[2]) > 0.9 else np.cross(n, [0, 0, 1.0])
-    u /= np.linalg.norm(u)
-    v = np.cross(n, u)
-    pu = plane_verts @ u
-    pv = plane_verts @ v
-    center = plane_verts.mean(axis=0)
+    # Which side of the plane the half is on, so the groove is cut into its
+    # face rather than floating in the space of the other half.
+    heights = np.asarray(half.vertices, dtype=np.float64) @ n
+    side = 1.0 if (heights.max() - offset) > (offset - heights.min()) else -1.0
 
-    # Two vents: one along each in-plane axis, from center to edge
-    half_m = _to_manifold(half)
-    for direction, length in [(u, (pu.max() - pu.min()) / 2), (v, (pv.max() - pv.min()) / 2)]:
+    # Two vents: one along each in-plane axis, from the centre out through
+    # the edge, so air trapped at the cavity has a way out.
+    try:
+        half_m = _to_manifold(half)
+    except Exception:
+        _note(notes, failed)
+        return half
+    for direction, length in [(u, width_u / 2), (v, width_v / 2)]:
+        # Box axes: x across the groove, y along it, z into the face. It
+        # straddles the plane so exactly channel_d of it lies in this half.
         groove = trimesh.creation.box([channel_w, length + 2, channel_d * 2])
-        vent_center = center + direction * (length / 2) - n * channel_d
-        # Rotate groove to face in direction
-        rot = trimesh.transformations.rotation_matrix(
-            np.arccos(np.clip(direction @ np.array([0.0, 1.0, 0.0]), -1, 1)),
-            np.cross(np.array([0.0, 1.0, 0.0]), direction) + 1e-9,
-        )
-        groove.apply_transform(rot)
-        groove.apply_translation(vent_center)
+        across = np.cross(n, direction)
+        groove.apply_transform(_frame_matrix(across, direction, n * side, center + direction * (length / 2)))
         try:
             half_m = half_m - _to_manifold(groove)
         except Exception:
-            pass
+            _note(notes, "Only one air vent could be cut; scratch a second shallow groove across the parting face.")
 
     try:
         return _to_mesh(half_m)
     except Exception:
+        _note(notes, failed)
         return half
 
 
@@ -437,6 +487,7 @@ def make_clamp(
     flange_thickness: float = 5.0,
     arm_thickness: float = 8.0,
     bolt_dia: float = 4.5,
+    notes: list[str] | None = None,
 ) -> trimesh.Trimesh:
     """Printable C-clamp that grips both mold halves at the parting flange.
 
@@ -459,7 +510,8 @@ def make_clamp(
         clamp_m = _to_manifold(outer) - _to_manifold(inner)
         clamp = _to_mesh(clamp_m)
     except Exception:
-        clamp = outer
+        _note(notes, "The clamp's slot could not be cut, so the clamp is a solid block; leave it out and use rubber bands or a shop clamp.")
+        return outer
 
     # Bolt holes through both clamp arms at each end
     for x_off in [-clamp_w * 0.35, clamp_w * 0.35]:
@@ -470,7 +522,7 @@ def make_clamp(
                 clamp_m = _to_manifold(clamp) - _to_manifold(hole)
                 clamp = _to_mesh(clamp_m)
             except Exception:
-                pass
+                _note(notes, "Not every bolt hole could be cut in the clamp; drill the missing ones after printing.")
 
     return clamp
 
@@ -498,12 +550,17 @@ def build(
     add_clamps: bool = True,
     clearance_mm: float = 0.2,
     wall_mm: float | None = None,
+    notes: list[str] | None = None,
 ) -> dict[str, trimesh.Trimesh]:
     """Build the mold.
 
     Returns a dict with keys: 'top', 'bottom', and (if add_clamps) 'clamp'.
     All are printable trimesh.Trimesh objects.
     'top' and 'bottom' are aligned to each other — stack them at the parting plane.
+
+    Pass a list as ``notes`` to collect any feature (pins, pour hole, vents,
+    bolt holes, clamp slot, 3-piece split) that could not be cut and was
+    left out, each as a sentence telling the user what to do instead.
     """
     if wall_mm is None:
         wall_mm = analysis.wall_mm
@@ -519,11 +576,11 @@ def build(
 
     top, bot = _split_halves(mold_full, analysis.split_axis, analysis.split_offset)
 
-    top, bot = _add_alignment_pins(top, bot, analysis.split_axis, analysis.split_offset)
-    top = _add_pour_spout(top, analysis.split_axis, analysis.split_offset)
-    top = _add_vent_channels(top, analysis.split_axis, analysis.split_offset)
-    top = _add_bolt_holes(top, analysis.split_axis, analysis.split_offset)
-    bot = _add_bolt_holes(bot, analysis.split_axis, analysis.split_offset)
+    top, bot = _add_alignment_pins(top, bot, analysis.split_axis, analysis.split_offset, notes=notes)
+    top = _add_pour_spout(top, analysis.split_axis, analysis.split_offset, notes=notes)
+    top = _add_vent_channels(top, analysis.split_axis, analysis.split_offset, notes=notes)
+    top = _add_bolt_holes(top, analysis.split_axis, analysis.split_offset, notes=notes, which="top")
+    bot = _add_bolt_holes(bot, analysis.split_axis, analysis.split_offset, notes=notes, which="bottom")
 
     result: dict[str, trimesh.Trimesh] = {"top": top, "bottom": bot}
 
@@ -537,10 +594,12 @@ def build(
             side_a, side_b = _split_halves(bot, perp, perp_offset)
             result = {"top": top, "side_a": side_a, "side_b": side_b}
         except MoldError:
-            pass  # keep 2-part if the split fails
+            # Keep the 2-piece mold, but say so: the undercuts that called
+            # for three pieces may grip the cast.
+            _note(notes, "The bottom could not be split into two side pieces, so this is a 2-piece mold; the undercuts may grip the cast, so use a flexible mold material.")
 
     if add_clamps:
         half = result.get("top", top)
-        result["clamp"] = make_clamp(half)
+        result["clamp"] = make_clamp(half, notes=notes)
 
     return result

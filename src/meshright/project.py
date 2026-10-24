@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import re
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +24,9 @@ from .formats import ReadError, read_zip_member
 
 EXTENSION = ".meshright"
 FORMAT_VERSION = 1
+
+# How many autosaved projects are kept; the oldest go first.
+AUTOSAVE_KEEP = 10
 
 
 class ProjectError(ValueError):
@@ -37,22 +43,100 @@ def _read_mesh(data: bytes) -> trimesh.Trimesh:
 
 
 def save(doc: Document) -> bytes:
-    applied = doc.steps[: doc.position]
+    buffer = io.BytesIO()
+    write(doc, buffer)
+    return buffer.getvalue()
+
+
+def write(doc: Document, target) -> None:
+    """Write the project zip to an open binary file or buffer. The document
+    is read under its lock, then the meshes are exported outside it (meshes
+    are never changed in place), so a long export does not hold up steps."""
+    with doc.lock:
+        applied = list(doc.steps[: doc.position])
+        original, current, dropped = doc.original, doc.mesh, doc.dropped
     info = {
         "format": FORMAT_VERSION,
         "app": f"MeshRight {__version__}",
         "name": doc.name,
         "steps": [{"action": s.action, "params": _plain(s.params), "receipt": s.receipt} for s in applied],
-        "earlier_steps": doc.dropped,
-        "scanner": doc.original.metadata.get("scanner"),
+        "earlier_steps": dropped,
+        "scanner": original.metadata.get("scanner"),
     }
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("project.json", json.dumps(info, indent=2))
-        zf.writestr("original.ply", _mesh_bytes(doc.original))
+        zf.writestr("original.ply", _mesh_bytes(original))
         if applied:
-            zf.writestr("current.ply", _mesh_bytes(doc.mesh))
-    return buffer.getvalue()
+            zf.writestr("current.ply", _mesh_bytes(current))
+
+
+# ---------------------------------------------------------------- autosave
+#
+# After every step the open model is saved as a project in the settings
+# folder, so a crash or a closed laptop lid loses at most the last step.
+# Autosaves are ordinary .meshright files: the Recover list in the app
+# opens them, or open the file by hand.
+
+
+def autosave_dir() -> Path:
+    from .settings import config_dir
+
+    return config_dir() / "autosave"
+
+
+def autosave(doc: Document, key: str) -> Path:
+    """Save the document to the autosave folder. The zip is written to a
+    temporary file first and renamed into place, so a crash mid-write never
+    leaves a broken autosave behind."""
+    folder = autosave_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = re.sub(r"[^\w\-]", "_", Path(doc.name).stem)[:60] or "model"
+    path = folder / f"{stem}-{key}{EXTENSION}"
+    tmp = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(tmp, "wb") as handle:
+            write(doc, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    for old in _autosave_files(folder)[AUTOSAVE_KEEP:]:
+        old.unlink(missing_ok=True)
+    return path
+
+
+def _autosave_files(folder: Path) -> list[Path]:
+    """Autosaves, newest first."""
+    files = [p for p in folder.glob(f"*{EXTENSION}") if p.is_file()]
+    return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def autosaves() -> list[dict]:
+    """What can be recovered: file name, when it was saved and its size."""
+    folder = autosave_dir()
+    if not folder.is_dir():
+        return []
+    found = []
+    for path in _autosave_files(folder):
+        stat = path.stat()
+        found.append({
+            "file": path.name,
+            "saved": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+            "size_mb": round(stat.st_size / 1e6, 1),
+        })
+    return found
+
+
+def autosave_path(file: str) -> Path | None:
+    """The autosave with this file name, or None if there is no such file.
+    Only a bare file name is accepted, so nothing outside the folder can be
+    reached."""
+    if file != Path(file).name or not file.endswith(EXTENSION) or file.startswith("."):
+        return None
+    path = autosave_dir() / file
+    return path if path.is_file() else None
 
 
 def _plain(value):

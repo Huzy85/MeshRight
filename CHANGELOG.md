@@ -63,6 +63,37 @@ Ten new actions for the scan-to-print and repair workflow:
   scan is missing geometry the photo shows as present, and fills them.
   No third-party vision library needed — uses numpy, scipy and PIL.
 
+Hardening, from a code and security audit of the whole backend:
+
+- **Your work survives a crash.** After every step the open model is autosaved
+  as a `.meshright` project in the settings folder (the newest 10 are kept).
+  New `GET /api/recover` lists them and `POST /api/recover/{file}` reopens one.
+  `MESHRIGHT_AUTOSAVE=0` turns it off; `sync` saves inline (for tests).
+- **Undo history has a memory cap.** Older steps are dropped once the kept ones
+  weigh more than `MESHRIGHT_MAX_UNDO_MB` (default 1500), not only after 20
+  steps, so twenty steps on a 100 MB scan no longer hold 2 GB.
+- **Batch jobs have a size cap.** A batch stops adding fixed files past
+  `MESHRIGHT_MAX_BATCH_MB` (default 4000); the rest are reported as skipped
+  with a plain reason instead of the server running out of memory.
+- **Settings are written atomically** (temp file, fsync, rename), so a crash
+  mid-write cannot leave an empty or half-written settings file.
+- **AMF and 3MF are parsed with defusedxml**, so a crafted file with entity
+  expansion ("billion laughs") is refused instead of eating memory.
+- **`meshright fix` no longer overwrites earlier output** unless `--overwrite`
+  is given; files it kept are listed on stderr.
+- **Mold receipts say what was left out.** Every mold feature (pins, pour hole,
+  vents, bolt holes, clamp slot) used to fail silently; the receipt now carries
+  a "Left out:" line with what to do by hand.
+- **Alignment pins are now actually added.** The pin union used an operator
+  manifold3d does not define, so every mold since 0.3.0 began shipped without
+  pins and said nothing. The matching holes also went into the wrong half.
+  Pins now sit mid-wall on the negative side of each in-plane axis, clear of
+  the bolt holes (which used to drill them away), and the pour hole, vents and
+  bolt holes are placed from the parting face rather than the half's bounds, so
+  the protruding pins no longer shift them.
+- **Real-scan tests** read their models from `MESHRIGHT_TEST_MODELS` instead of
+  a hard-coded NAS path, and skip cleanly when it is not set.
+
 ## 0.2.1
 
 - **Hollow for resin is much more reliable.** The hollowed shell now stays

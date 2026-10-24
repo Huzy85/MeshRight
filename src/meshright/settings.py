@@ -115,4 +115,19 @@ def save(printer: Printer) -> None:
     printer.validate()
     path = _path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"printer": printer.to_dict()}, indent=2), encoding="utf-8")
+    write_atomic(path, json.dumps({"printer": printer.to_dict()}, indent=2).encode("utf-8"))
+
+
+def write_atomic(path: Path, data: bytes) -> None:
+    """Write a file so a crash or power cut mid-write never leaves it half
+    written: the bytes go to a temporary file next to it, then replace it."""
+    tmp = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise

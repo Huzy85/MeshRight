@@ -29,6 +29,9 @@ from .document import Document
 
 WEB_DIR = Path(__file__).parent / "web"
 MAX_UPLOAD_MB = int(os.environ.get("MESHRIGHT_MAX_UPLOAD_MB", "1000"))
+# A batch is read one file at a time, but every fixed file is held in memory
+# until the zip is made, so the whole batch is capped as well.
+MAX_BATCH_MB = int(os.environ.get("MESHRIGHT_MAX_BATCH_MB", "4000"))
 
 # Above this, the browser gets a lighter copy to display; the full mesh is
 # kept for checking, fixing and export.
@@ -100,10 +103,12 @@ async def only_this_computer(request: Request, call_next):
         if request.headers.get("sec-fetch-site") not in (None, "same-origin", "none"):
             return JSONResponse({"detail": "Requests from other websites are not allowed."}, status_code=403)
         # Refuse oversized uploads before they are read (batches may hold many files).
-        allowed = MAX_UPLOAD_MB * 1024 * 1024 * (20 if request.url.path == "/api/batch" else 1) + 1024 * 1024
+        batch = request.url.path == "/api/batch"
+        limit_mb = MAX_BATCH_MB if batch else MAX_UPLOAD_MB
         length = request.headers.get("content-length", "")
-        if length.isdigit() and int(length) > allowed:
-            return JSONResponse({"detail": f"File is larger than {MAX_UPLOAD_MB} MB."}, status_code=413)
+        if length.isdigit() and int(length) > limit_mb * 1024 * 1024 + 1024 * 1024:
+            what = "The files together are" if batch else "File is"
+            return JSONResponse({"detail": f"{what} larger than {limit_mb} MB."}, status_code=413)
     response = await call_next(request)
     # No other website may show MeshRight inside a frame (clickjacking).
     response.headers["X-Frame-Options"] = "DENY"
@@ -341,17 +346,23 @@ async def batch_fix(files: list[UploadFile], options: str = Form("{}")) -> dict:
     printer = _printer()
 
     outputs = []
+    held = 0  # bytes of fixed files waiting to be zipped
     for file in files:
         name = Path(file.filename or "model").name
         suffix = Path(name).suffix.lower()
         if suffix not in SUPPORTED_EXTENSIONS:
             outputs.append((batch.Result(name=name, ok=False, error="Unsupported file type."), None))
             continue
+        if held > MAX_BATCH_MB * 1024 * 1024:
+            outputs.append((batch.Result(name=name, ok=False, error=f"Skipped: the batch already holds more than {MAX_BATCH_MB} MB of fixed files. Run the rest as a second batch."), None))
+            continue
         tmp_path = await _save_upload(file, suffix)
         try:
-            outputs.append(await run_in_threadpool(batch.process_file, tmp_path, name, opts, printer))
+            result, data = await run_in_threadpool(batch.process_file, tmp_path, name, opts, printer)
         finally:
             tmp_path.unlink(missing_ok=True)
+        outputs.append((result, data))
+        held += len(data) if data is not None else 0
 
     archive = await run_in_threadpool(batch.zip_results, outputs)
     batch_id = uuid.uuid4().hex
@@ -417,7 +428,74 @@ async def do_action(doc_id: str, payload: dict = Body(...)) -> dict:
     except ActionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _get(doc_id)  # closed while it ran: say so instead of a state for nothing
+    _autosave(doc_id, doc)
     return state
+
+
+# ---------------------------------------------------------------- autosave
+
+# doc id -> whether another save is wanted once the running one finishes.
+_autosave_wanted: dict[str, bool] = {}
+
+
+def _autosave(doc_id: str, doc: Document) -> None:
+    """Save the model's progress after a step, so a crash loses at most that
+    step. Runs in the background; a step made during a save queues one more
+    save, so the newest state always lands. MESHRIGHT_AUTOSAVE=0 turns it off
+    and MESHRIGHT_AUTOSAVE=sync saves before answering (used by tests)."""
+    from . import project
+
+    mode = os.environ.get("MESHRIGHT_AUTOSAVE", "1")
+    if mode == "0":
+        return
+
+    def save_once():
+        try:
+            project.autosave(doc, doc_id[:8])
+        except Exception:
+            log.warning("Could not autosave %s", doc.name, exc_info=True)
+
+    if mode == "sync":
+        save_once()
+        return
+    with _lock:
+        if doc_id in _autosave_wanted:
+            _autosave_wanted[doc_id] = True
+            return
+        _autosave_wanted[doc_id] = False
+
+    def work():
+        while True:
+            save_once()
+            with _lock:
+                if not _autosave_wanted.get(doc_id):
+                    _autosave_wanted.pop(doc_id, None)
+                    return
+                _autosave_wanted[doc_id] = False
+
+    threading.Thread(target=work, name="meshright-autosave", daemon=True).start()
+
+
+@app.get("/api/recover")
+def list_recoverable() -> dict:
+    """Autosaved projects that can be opened again, newest first."""
+    from . import project
+
+    return {"files": project.autosaves()}
+
+
+@app.post("/api/recover/{file}")
+async def recover(file: str) -> dict:
+    """Open an autosaved project as a new model."""
+    from . import project
+
+    path = project.autosave_path(file)
+    if path is None:
+        raise HTTPException(status_code=404, detail="There is no autosave with that name.")
+    try:
+        return await run_in_threadpool(_open, path, file)
+    except (MeshLoadError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/doc/{doc_id}/ask")
@@ -592,7 +670,8 @@ async def new_model(doc_id: str, payload: dict = Body(...)) -> dict:
         with _lock:
             _documents[new_id] = new
             while len(_documents) > MAX_OPEN_DOCUMENTS:
-                _documents.popitem(last=False)
+                old_id, _ = _documents.popitem(last=False)
+                _display_cache.pop(old_id, None)
         state = _state(new_id, new)
         state["notice"] = receipt
         return state
@@ -612,7 +691,9 @@ async def history_command(doc_id: str, command: str) -> dict:
             commands[command]()
         return _state(doc_id, doc)
 
-    return await run_in_threadpool(work)
+    state = await run_in_threadpool(work)
+    _autosave(doc_id, doc)
+    return state
 
 
 # doc id -> (the mesh it was made from, STL bytes, triangles shown). Holding

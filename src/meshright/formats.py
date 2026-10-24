@@ -5,11 +5,18 @@ from __future__ import annotations
 
 import io
 import re
-import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
 import numpy as np
+
+# defusedxml refuses XML "bombs" (entity expansion, external entities) that
+# the standard parser would try to expand. It is a hard dependency, but if it
+# is somehow missing the standard parser is used rather than nothing at all.
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:  # pragma: no cover
+    import xml.etree.ElementTree as ET
 
 # AMF "unit" attribute -> millimetres.
 AMF_UNITS_TO_MM = {
