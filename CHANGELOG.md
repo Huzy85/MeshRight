@@ -2,6 +2,34 @@
 
 ## 0.3.0 (unreleased)
 
+New browser UI, built for people who have never repaired a model before:
+
+- **Simple and Advanced modes**: a switch in the header, remembered between visits.
+  Simple shows one card at the bottom with the score, one line on what is wrong and
+  one blue button that does the next right thing (fix, stand up, choose printer,
+  export). Advanced shows every tool and number in a dock beside the model that
+  can be dragged wider or narrower, or hidden with T.
+- **Tool rail** on the left: in Simple it holds Fix, Stand up, Size, Measure,
+  Printer and More tools; in Advanced it holds the edit tools (Measure, Erase,
+  Piece, Cut, Hole, Sculpt, Make a part, Pick bottom).
+- **View cube** in the top-right corner, like a slicer: click a face to look from
+  that side, Home to go back. Keys 0 to 6 do the same. The View button opens
+  problem lines, wireframe, overhangs, rough spots and the cut view.
+- **Corner pills**: undo, redo and History bottom-left; size, triangle count and
+  Report a problem bottom-right.
+- **Wrong units card**: a model that opens a few millimetres across is offered
+  "Saved in inches / centimetres / metres" before anything else.
+- **One at a time**: step through the problems one by one instead of fixing all
+  at once, skipping any you want to keep.
+- **Help**: a searchable guide of 45 topics in plain English, every keyboard
+  shortcut, and the version. Every control has a plain tooltip saying what it
+  does and when to use it.
+- **Report a problem**: collects the last error messages, the History steps,
+  version, browser and OS into a zip in Downloads and opens a pre-filled email to
+  support@steamvibe.com. Your model is only included if you tick the box. Files
+  over 20 MB get a note about attaching them.
+- Works on tablet (rail and card shrink, dock stacks below the model) and phone.
+
 Twelve new actions for scan-to-print, repair, casting and mold making:
 
 - **Check if a mold can be made** (`analyse_mold`): Analyses a part for casting

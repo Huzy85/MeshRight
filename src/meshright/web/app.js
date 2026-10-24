@@ -234,7 +234,17 @@ function showPanel(which) {
 function showError(message) {
   $('error-text').textContent = message;
   showPanel('panel-error');
+  logError(message);
 }
+
+// The last things that went wrong, for "Report a problem" (never sent anywhere
+// by itself).
+const errorLog = [];
+function logError(text) {
+  errorLog.push({ at: new Date().toISOString(), text: String(text).slice(0, 500) });
+  if (errorLog.length > 30) errorLog.shift();
+}
+window.addEventListener('error', (e) => logError(`${e.message} (${e.filename}:${e.lineno})`));
 
 let statusTimer = null;
 function showStatus(message, kind = 'info') {
@@ -242,6 +252,7 @@ function showStatus(message, kind = 'info') {
   el.textContent = message;
   el.className = kind;
   el.hidden = false;
+  if (kind === 'error') logError(message);
   clearTimeout(statusTimer);
   // "busy" stays until the work finishes and the next message replaces it.
   if (kind !== 'busy') statusTimer = setTimeout(() => { el.hidden = true; }, kind === 'error' ? 8000 : 6000);
@@ -333,7 +344,7 @@ function renderReport(state) {
   const ring = $('score-ring');
   ring.style.setProperty('--pct', state.score);
   ring.style.setProperty('--ring',
-    state.score >= 90 && state.printable ? 'var(--good)' : state.printable ? 'var(--ok)' : 'var(--bad)');
+    state.score >= 90 && state.printable ? 'var(--good-ring)' : state.printable ? 'var(--warn-ring)' : 'var(--bad-ring)');
   $('score-value').textContent = state.score;
   $('verdict').textContent = state.verdict;
   $('file-name').textContent = state.name;
@@ -342,7 +353,14 @@ function renderReport(state) {
   renderStats(state.stats);
   renderHistory(state.history);
   showPanel('panel-report');
+  lastState = state;
+  for (const fn of stateListeners) fn(state);
 }
+
+// The guided card, the corner widgets and the report dialog (ui.js) follow
+// the same state as the panel.
+let lastState = null;
+const stateListeners = [];
 
 // ---------------------------------------------------------------- guided checklist
 
@@ -2335,7 +2353,7 @@ async function openFile(file) {
     }
     addTab(state.doc_id, state.name);
     $('drop-hint').hidden = true;
-    $('view-controls').hidden = false;
+    document.body.classList.add('has-model');
     if (state.notice) showStatus(state.notice);
   } catch (err) {
     if (err.cancelled) return;
@@ -2431,7 +2449,9 @@ async function closeTab(id) {
   clearModel();
   applyCoin();  // no model: the coin goes too
   $('drop-hint').hidden = false;
-  $('view-controls').hidden = true;
+  document.body.classList.remove('has-model');
+  lastState = null;
+  for (const fn of stateListeners) fn(null);
   showPanel('panel-empty');
   $('undo').disabled = true;
   $('redo').disabled = true;
@@ -3032,3 +3052,16 @@ $('ai-apply').addEventListener('click', async () => {
     setBusy(false);
   }
 });
+
+// ---------------------------------------------------------------- shared with ui.js
+// The guided card, tool rail, view cube and report dialog live in ui.js and
+// drive the same functions as the panel. `let` bindings stay live.
+
+export {
+  THREE, $, camera, controls, modelRoot, renderer, homeView, resetView,
+  docId, busy, lastState, stateListeners, errorLog,
+  printer, printerChosen, preferredSlicer, sendToSlicer, exportAs, runAction,
+  openCleanup, openUp, openPrinter, openFile, exitModes, toolActive,
+  showStatus, showTip, fmt, readStore, writeStore, FIX_CODES, STAND_CODES,
+  undo, redo,
+};
