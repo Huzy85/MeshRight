@@ -16,7 +16,7 @@ function setMode(mode, { remember = true } = {}) {
   for (const b of document.querySelectorAll('#mode-switch [data-mode]')) {
     b.setAttribute('aria-checked', String(b.dataset.mode === mode));
   }
-  if (mode === 'advanced') closeDrawer();
+  if (mode === 'advanced') { closeDrawer(); $('panel').scrollTop = 0; }
   if (remember) app.writeStore(MODE_KEY, mode);
   renderCard(app.lastState);
 }
@@ -39,7 +39,12 @@ function openDrawer(sectionId, { openDetails = false } = {}) {
     const el = $(sectionId);
     if (el) {
       if (openDetails && el.tagName === 'DETAILS') el.open = true;
-      requestAnimationFrame(() => el.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+      requestAnimationFrame(() => {
+        // Scroll the panel itself, never the page: scrollIntoView would also shove the whole document up.
+        const panel = $('panel');
+        const top = el.getBoundingClientRect().top - panel.getBoundingClientRect().top + panel.scrollTop - 12;
+        panel.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      });
     }
   }
   updateRail();
@@ -133,6 +138,8 @@ function updateRail() {
 const card = $('card');
 let stepper = null;  // { skipped: Set<code> } while "One at a time" is open
 const dismissed = new Set();  // "docId:code" the user said to leave alone
+let lastSeen = null;   // { doc, pos, sig } from the previous render, to notice a Clean up that changed nothing
+let stuck = false;     // the last step was a Clean up and the same problems are still there
 
 $('card-collapse').addEventListener('click', () => {
   card.classList.toggle('collapsed');
@@ -169,12 +176,24 @@ function renderCard(state) {
   const tooBig = issues.get('too_big');
   const size = state.stats?.size_mm?.map((v) => app.fmt(v, v >= 100 ? 0 : 1)).join(' × ');
 
+  const sig = toFix.map((i) => `${i.code}:${i.title}`).join('|');
+  const pos = state.history?.position || 0;
+  const lastStep = state.history?.steps?.[pos - 1];
+  if (lastSeen && lastSeen.doc === state.doc_id && lastSeen.sig === sig && toFix.length) {
+    if (pos === lastSeen.pos + 1 && /^Clean ?up/i.test(lastStep?.receipt || '')) stuck = true;
+  } else {
+    stuck = false;
+  }
+  lastSeen = { doc: state.doc_id, pos, sig };
+
   const body = $('card-body');
   body.replaceChildren();
   const subBits = [];
   if (toFix.length) subBits.push(plural(toFix.length, 'thing') + ' to fix');
   if (stand) subBits.push('needs standing up');
   if (tooBig) subBits.push('too big for the printer');
+  const keptUnits = (issues.get('tiny_model') || issues.get('huge_model'));
+  if (keptUnits && dismissed.has(`${state.doc_id}:${keptUnits.code}`)) subBits.push(keptUnits.code === 'tiny_model' ? 'too small to print, size kept' : 'too big to print, size kept');
   if (!subBits.length) subBits.push(app.printerChosen ? `Fits the ${app.printer.name}` : 'Choose your printer to check it fits');
   if (size) subBits.push(`${size} mm`);
   $('card-sub').textContent = subBits.join(' · ');
@@ -185,23 +204,7 @@ function renderCard(state) {
   }
   stepper = null;
 
-  if (toFix.length) {
-    const blocked = toFix.some((i) => i.severity === 'error');
-    body.append(button('Make it printable', () => app.openCleanup(), {
-      primary: true,
-      title: 'Shows the plan first: which holes get filled, which bits get removed. Nothing changes until you press Clean up.',
-    }));
-    body.append(button('One at a time', () => { stepper = { skipped: new Set() }; renderCard(app.lastState); }, {
-      title: 'Go through each problem in turn, with its own fix and a Skip button',
-    }));
-    const sp = document.createElement('span'); sp.className = 'spacer'; body.append(sp);
-    body.append(button(blocked ? 'Export anyway' : 'Export as it is', () => app.exportAs('3mf'), {
-      title: blocked ? 'Save it with the problems still in. Your slicer may refuse it or print it wrong.' : 'Save it now. The remaining problems are minor.',
-    }));
-    return;
-  }
-
-  // Wrong units come before anything about standing: at 2 mm nothing else matters.
+  // Wrong units come before any repair: Clean up works in millimetres, so at 2 mm every tolerance is wrong.
   const units = (issues.get('tiny_model') || issues.get('huge_model'));
   if (units && units.fixes?.length && !dismissed.has(`${state.doc_id}:${units.code}`)) {
     const p = document.createElement('p');
@@ -211,6 +214,32 @@ function renderCard(state) {
     units.fixes.forEach((fix, i) => body.append(button(fix.label, () => app.runAction(fix.action, fix.params), { primary: i === 0 })));
     const sp = document.createElement('span'); sp.className = 'spacer'; body.append(sp);
     body.append(button('Size is right', () => { dismissed.add(`${state.doc_id}:${units.code}`); renderCard(app.lastState); }, { title: 'Keep this size and carry on' }));
+    return;
+  }
+
+  if (toFix.length) {
+    const blocked = toFix.some((i) => i.severity === 'error');
+    if (stuck) {
+      const p = document.createElement('p');
+      p.className = 'fine';
+      p.textContent = 'Clean up ran, but the same problems are still there. This file may be a loose pile of triangles rather than one surface. Make Solid rebuilds the surface from scratch, which usually works.';
+      body.append(p);
+      body.append(button('Make Solid', () => app.runAction('make_solid', {}), {
+        primary: true,
+        title: 'Rebuilds the whole surface as one closed shell. Fine detail may soften a little.',
+      }));
+    }
+    body.append(button('Make it printable', () => app.openCleanup(), {
+      primary: !stuck,
+      title: 'Shows the plan first: which holes get filled, which bits get removed. Nothing changes until you press Clean up.',
+    }));
+    body.append(button('One at a time', () => { stepper = { skipped: new Set() }; renderCard(app.lastState); }, {
+      title: 'Go through each problem in turn, with its own fix and a Skip button',
+    }));
+    const sp = document.createElement('span'); sp.className = 'spacer'; body.append(sp);
+    body.append(button(blocked ? 'Export anyway' : 'Export as it is', () => app.exportAs('3mf'), {
+      title: blocked ? 'Save it with the problems still in. Your slicer may refuse it or print it wrong.' : 'Save it now. The remaining problems are minor.',
+    }));
     return;
   }
 
