@@ -2322,9 +2322,11 @@ const redo = () => change('redo', null, () => 'Redone');
 
 let currentLoad = 0;
 
+let lastFailedFile = null;  // the last file that would not open, offered to "Report a problem"
 async function openFile(file) {
   if (!file) return;
   const loadId = ++currentLoad;
+  lastFailedFile = null;
   exitModes();
   showPanel('panel-busy');
   const busyText = $('busy-text');
@@ -2357,7 +2359,7 @@ async function openFile(file) {
     if (state.notice) showStatus(state.notice);
   } catch (err) {
     if (err.cancelled) return;
-    if (loadId === currentLoad) showError(err.message);
+    if (loadId === currentLoad) { lastFailedFile = file; showError(err.message); }
   }
 }
 
@@ -3059,7 +3061,7 @@ $('ai-apply').addEventListener('click', async () => {
 
 export {
   THREE, $, camera, controls, modelRoot, renderer, homeView, resetView,
-  docId, busy, lastState, stateListeners, errorLog,
+  docId, busy, lastState, stateListeners, errorLog, lastFailedFile,
   printer, printerChosen, preferredSlicer, sendToSlicer, exportAs, runAction,
   openCleanup, openUp, openPrinter, openFile, exitModes, toolActive,
   showStatus, showTip, fmt, readStore, writeStore, FIX_CODES, STAND_CODES,
