@@ -100,12 +100,6 @@ def test_smooth_scan_reduces_roughness_bunny():
         f"smooth_scan did not reduce roughness on bunny: {roughness_before:.2f}° → {roughness_after:.2f}°"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: make_solid refuses a mostly-closed single-layer mesh (open bottom) "
-           "because it can't find inside/outside. Should handle this case — "
-           "the bunny has a clear interior; only a small base hole is missing.",
-)
 def test_make_solid_closes_bunny():
     """make_solid should produce a watertight mesh from the open-bottomed bunny."""
     m = _bad("bunny_open")
@@ -115,11 +109,6 @@ def test_make_solid_closes_bunny():
     assert result.volume > 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: scan_to_print calls make_solid, which refuses the bunny. "
-           "Blocked by the same inside/outside detection issue.",
-)
 def test_scan_to_print_bunny():
     """Full scan-to-print pipeline on the bunny produces a watertight solid."""
     m = _bad("bunny_open")
@@ -246,7 +235,10 @@ def test_soup_make_solid_does_not_crash():
 
 # ================================================================ EXTEND BREAK — clean open rim
 # Create a cylinder with one cap removed: the cleanest possible open rim.
-# This is the test fixture extend_break was designed for.
+# extend_break was written for flat break faces on closed solids; a scan of a
+# broken part usually offers only an open rim like this, so it continues the
+# surface from the rim instead (fixed 2026-10-24, see tests/test_hardening.py
+# for the detailed checks).
 
 def _open_cylinder(radius=10.0, height=30.0) -> trimesh.Trimesh:
     """A cylinder open at the top — a clean circular break boundary."""
@@ -257,13 +249,6 @@ def _open_cylinder(radius=10.0, height=30.0) -> trimesh.Trimesh:
     return trimesh.Trimesh(cyl.vertices, cyl.faces[mask], process=False)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: extend_break fails its own join-up check even on a perfect synthetic "
-           "cylinder with a clean circular rim. The swept surface is constructed but "
-           "the seam-weld step cannot close it. Needs fixing in extend.py before "
-           "extend_break can be advertised as working.",
-)
 def test_extend_break_clean_cylinder_rim():
     """extend_break on a clean circular rim should extend the cylinder wall."""
     m = _open_cylinder()

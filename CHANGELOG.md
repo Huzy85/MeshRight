@@ -94,6 +94,22 @@ Hardening, from a code and security audit of the whole backend:
 - **Real-scan tests** read their models from `MESHRIGHT_TEST_MODELS` instead of
   a hard-coded NAS path, and skip cleanly when it is not set.
 
+Three bugs found by testing on broken scans from the internet:
+
+- **Make Solid works on tiny or metre-scale models.** A scan saved in metres
+  (the Stanford bunny is 0.15 "mm" tall) was reduced to a single voxel by the
+  0.2 mm grid floor and refused. Models under 30 mm now get at least 150 cells
+  across. Scan to print, which ends with Make Solid, works on them too.
+- **Rebuild broken end continues an open edge.** Scans of broken parts rarely
+  have a flat break face; the surface just stops. Clicking next to an open
+  edge now continues the surface from that edge, following its curve, and
+  leaves the far end open like the edge was. Works on the open teapot and a
+  cut tube; a flat face on a closed model still rebuilds a closed end.
+- **Rebuild broken end no longer refuses every open scan.** Its join-up check
+  demanded a watertight result, which an open scan (a face scan, an open
+  bottom) can never give. It now checks that no open edges were gained or
+  lost and the surface still faces one way.
+
 ## 0.2.1
 
 - **Hollow for resin is much more reliable.** The hollowed shell now stays

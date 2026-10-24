@@ -777,27 +777,30 @@ def test_merge_scan_two_scans():
 
 # ================================================================ EXTEND BREAK
 
-@pytest.mark.xfail(reason="extend_break requires a clean break boundary; NAS scans often fail the join-up check")
 def test_extend_break_open_mesh_smok():
-    """extend_break on a boundary vertex of the open smok scan extends the surface."""
+    """extend_break on a flat spot of the open smok scan grows the surface there
+    without closing or opening anything else (the join-up check used to demand
+    a watertight result, which an open scan can never give)."""
     m = _nas("smok")
     pt = m.vertices[m.faces[0, 0]].tolist()
-    result, _ = run_action(m, "extend_break", {
+    result, note = run_action(m, "extend_break", {
         "point":        pt,
         "length_mm":    8.0,
         "follow_curve": True,
         "taper":        True,
     })
-    assert len(result.faces) > 0
+    assert len(result.faces) > len(m.faces)
+    assert note.startswith("Rebuilt the broken end 8 mm")
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(reason="extend_break requires a clean break boundary; trimesh sample models often fail the join-up check")
 def test_extend_break_teapot():
+    """The teapot's first vertex sits on its open rim, so the rim is continued."""
     m = _web("teapot")
     pt = m.vertices[0].tolist()
-    result, _ = run_action(m, "extend_break", {"point": pt, "length_mm": 5.0})
-    assert len(result.faces) >= len(m.faces)
+    result, note = run_action(m, "extend_break", {"point": pt, "length_mm": 5.0})
+    assert len(result.faces) > len(m.faces)
+    assert note.startswith("Continued the open edge 5 mm")
 
 
 # ================================================================ ERASE PIECE

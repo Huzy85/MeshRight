@@ -1309,9 +1309,9 @@ def add_hole(mesh, point, direction, diameter_mm, depth_mm):
 @action(
     "extend_break",
     "Rebuild a broken end",
-    "Rebuilds a snapped-off tab, ear or lug by growing it forward from the flat break surface, following the curve and taper it had before it broke.",
+    "Rebuilds a snapped-off tab, ear or lug by growing it forward from the flat break surface, following the curve and taper it had before it broke. Clicking next to an open edge continues the surface from that edge instead.",
     [
-        Param("point", "numbers", "Click on the flat break surface where the piece snapped off.", minimum=3, maximum=3),
+        Param("point", "numbers", "Click on the flat break surface where the piece snapped off, or next to the open edge to continue.", minimum=3, maximum=3),
         Param("length_mm", "number", "How long the rebuilt end should be, in mm.", minimum=0.5, maximum=1000, default=10.0),
         Param("follow_curve", "boolean", "Follow the bend the part had before it broke, rather than growing straight.", default=True),
         Param("taper", "boolean", "Follow the way the part was getting narrower or wider before the break.", default=True),
