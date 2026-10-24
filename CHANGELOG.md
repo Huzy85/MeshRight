@@ -29,6 +29,18 @@ New browser UI, built for people who have never repaired a model before:
   support@steamvibe.com. Your model is only included if you tick the box. Files
   over 20 MB get a note about attaching them.
 - Works on tablet (rail and card shrink, dock stacks below the model) and phone.
+  On a narrow view the tool bars (Cut, Sculpt and the rest) wrap to several rows
+  and the view cube steps aside, so nothing is clipped.
+- **Make Solid when Clean up changes nothing**: a file that is a loose pile of
+  triangles now gets Make Solid offered after one Clean up that fixed nothing,
+  instead of the same button again.
+- **Report a file that would not open**: Report a problem is reachable from the
+  failure message and from Help, and can attach that file (with your yes).
+- **Rail shows the active tool** while Measure, Erase, Cut, Hole, Sculpt or Pick
+  bottom is open. Every quick-fix button in the checklist and Problems list has a
+  tooltip. Each sculpt stroke reports what it did.
+- The "must be closed" message no longer says "cut" when you were adding a hole,
+  checking walls or combining; it says what is needed and what to press.
 
 Twelve new actions for scan-to-print, repair, casting and mold making:
 

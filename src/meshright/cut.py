@@ -39,7 +39,7 @@ def _to_manifold(mesh: trimesh.Trimesh):
         tri_verts=np.asarray(mesh.faces, dtype=np.uint32),
     ))
     if solid.status() != manifold3d.Error.NoError:
-        raise CutError("The model must be closed before it can be cut. Run Clean up first.")
+        raise CutError("The model must be closed, with no holes, before this can be done. Run Clean up first.")
     return solid
 
 
