@@ -268,6 +268,9 @@ is told to. It will not replace an existing file unless it passes
 - **macOS says the app cannot be opened.** Right-click it and choose *Open*.
 - **A big scan is slow.** Use *Reduce detail* first. Above about 3 million
   triangles every change takes a while.
+- **Hollow says some pockets could not be drained.** A closed pocket inside
+  the model has no way out for resin. Cut the model in two, or add a hole
+  yourself with *Add a hole*, then hollow again.
 - **An FBX or binary USD file will not open.** Export it as OBJ, GLB or STL
   from the app that made it (Blender: File, Export).
 - **Something else went wrong.** Your model is never changed by a failed
