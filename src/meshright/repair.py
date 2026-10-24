@@ -340,6 +340,274 @@ def _cap_openings(mesh: trimesh.Trimesh, openings: list[Hole]) -> tuple[trimesh.
     return capped, np.asarray(centres)
 
 
+def fill_holes_curved(mesh: trimesh.Trimesh, max_edges: int = 600) -> tuple[trimesh.Trimesh, str]:
+    """Fill every open hole with a curvature-following patch.
+
+    The patch is not flat: it drapes over the hole continuing the surface
+    curvature from the boundary ring. Works by fan-filling each hole, then
+    relaxing the new interior vertices with a cotangent-weighted Laplacian
+    (boundary vertices fixed). Small holes are iterated more so they converge
+    fully; large ones get fewer passes but still improve on flat fill.
+    """
+    from scipy.sparse import lil_matrix
+    from scipy.sparse.linalg import spsolve
+
+    unique_sorted, counts = np.unique(mesh.edges_sorted, axis=0, return_counts=True)
+    boundary_set = set(map(tuple, unique_sorted[counts == 1]))
+    if not boundary_set:
+        return mesh, "No holes found."
+
+    # Build directed boundary adjacency list from face winding.
+    adj: dict[int, list[int]] = {}
+    for a, b in mesh.edges:
+        key = (min(int(a), int(b)), max(int(a), int(b)))
+        if key in boundary_set:
+            adj.setdefault(int(a), []).append(int(b))
+
+    # Trace loops, marking each directed edge as used so non-manifold
+    # junctions (where two holes share a vertex) are handled correctly.
+    used: set[tuple[int, int]] = set()
+    loops: list[list[int]] = []
+    for start in list(adj):
+        for first in adj.get(start, []):
+            ek = (start, first)
+            if ek in used:
+                continue
+            ring = [start]
+            used.add(ek)
+            cur = first
+            while cur != start:
+                ring.append(cur)
+                moved = False
+                for nxt_v in adj.get(cur, []):
+                    ek2 = (cur, nxt_v)
+                    if ek2 not in used:
+                        used.add(ek2)
+                        cur = nxt_v
+                        moved = True
+                        break
+                if not moved:
+                    break
+            if cur == start and len(ring) >= 3:
+                loops.append(ring)
+
+    small = [lp for lp in loops if len(lp) <= max_edges]
+    if not small:
+        return mesh, f"Found {len(loops)} hole(s) but all are larger than {max_edges} edges (too complex for curvature fill; use Clean up instead)."
+
+    verts = list(mesh.vertices)
+    faces = list(mesh.faces)
+    n_orig = len(mesh.vertices)
+    new_interior: list[int] = []
+
+    for ring in small:
+        ring_pos = mesh.vertices[np.array(ring)]
+        centroid = ring_pos.mean(axis=0)
+        ci = len(verts)
+        verts.append(centroid)
+        new_interior.append(ci)
+
+        # For larger holes add intermediate rings so the Laplacian has
+        # interior vertices to smooth between, not just a single centroid.
+        n_inner = max(0, len(ring) // 20)  # one extra ring per 20 boundary edges
+        if n_inner:
+            inner_rings: list[list[int]] = []
+            for k in range(1, n_inner + 1):
+                t = k / (n_inner + 1)
+                inner_pos = (1 - t) * ring_pos + t * centroid
+                ring_start = len(verts)
+                verts.extend(inner_pos.tolist())
+                new_interior.extend(range(ring_start, ring_start + len(ring)))
+                inner_rings.append(list(range(ring_start, ring_start + len(ring))))
+
+            # Connect boundary → inner_0 → ... → inner_N → centroid
+            all_rings = [ring] + inner_rings + [[ci] * len(ring)]
+            for ri in range(len(all_rings) - 1):
+                outer = all_rings[ri]
+                inner = all_rings[ri + 1]
+                for i in range(len(outer)):
+                    a0, a1 = outer[i], outer[(i + 1) % len(outer)]
+                    b0, b1 = inner[i % len(inner)], inner[(i + 1) % len(inner)]
+                    if b0 != b1:
+                        faces.extend([[a0, b0, b1], [a0, b1, a1]])
+                    else:
+                        faces.append([a0, a1, b0])
+        else:
+            for i, v0 in enumerate(ring):
+                v1 = ring[(i + 1) % len(ring)]
+                faces.append([v0, ci, v1])
+
+    filled = trimesh.Trimesh(np.array(verts), np.array(faces), process=False)
+    # DO NOT call remove_unreferenced_vertices here — that reindexes vertices
+    # and would invalidate new_interior before the Laplacian step.
+
+    if not new_interior:
+        return mesh, "Could not build fill patches."
+
+    # --- cotangent Laplacian relaxation on new interior vertices ---------------
+    v = np.asarray(filled.vertices, dtype=np.float64)
+    f = np.asarray(filled.faces, dtype=np.int64)
+    n_v = len(v)
+    # cotangent weights: for each face, cot of each corner
+    # w(i,j) += 0.5 * cot(angle at k) for the third vertex k
+    e0 = v[f[:, 2]] - v[f[:, 1]]
+    e1 = v[f[:, 0]] - v[f[:, 2]]
+    e2 = v[f[:, 1]] - v[f[:, 0]]
+    # cot(angle at v0) = dot(e1,-e2) / |e1 x -e2|
+    def _cot(a, b):
+        dot = (a * b).sum(axis=1)
+        cross = np.linalg.norm(np.cross(a, b), axis=1)
+        cross = np.where(cross < 1e-12, 1e-12, cross)
+        return dot / cross
+
+    cot0 = _cot(-e1, e2)
+    cot1 = _cot(-e2, e0)
+    cot2 = _cot(-e0, e1)
+
+    W = lil_matrix((n_v, n_v))
+    for fi in range(len(f)):
+        i, j, k = int(f[fi, 0]), int(f[fi, 1]), int(f[fi, 2])
+        w = max(0.0, cot0[fi]) * 0.5
+        W[j, k] += w; W[k, j] += w
+        w = max(0.0, cot1[fi]) * 0.5
+        W[i, k] += w; W[k, i] += w
+        w = max(0.0, cot2[fi]) * 0.5
+        W[i, j] += w; W[j, i] += w
+
+    interior_set = set(new_interior)
+    interior = [vid for vid in range(n_v) if vid in interior_set]
+    if not interior:
+        return mesh, "Fill completed (no interior vertices to smooth)."
+
+    interior = np.array(interior, dtype=np.int64)
+    boundary = np.array([i for i in range(n_v) if i not in interior_set], dtype=np.int64)
+
+    # Build the Laplacian for interior vertices only; solve Lx = -L_boundary * x_boundary
+    from scipy.sparse import csr_matrix
+    Wc = W.tocsr()
+    row_sum = np.asarray(Wc.sum(axis=1)).ravel()
+    # Diagonal = sum of weights
+    from scipy.sparse import diags
+    L = diags(row_sum) - Wc
+    L_int = L[np.ix_(interior, interior)]
+    L_bd = L[np.ix_(interior, boundary)]
+    rhs = -(L_bd @ v[boundary])
+    # Solve for each coordinate
+    new_v = v.copy()
+    for col in range(3):
+        try:
+            sol = spsolve(L_int.tocsr(), rhs[:, col])
+            if np.all(np.isfinite(sol)):
+                new_v[interior, col] = sol
+        except Exception:
+            pass  # keep fan fill if solver fails
+
+    result = trimesh.Trimesh(new_v, f, process=True, validate=False)
+    trimesh.repair.fix_normals(result, multibody=True)
+    result.remove_unreferenced_vertices()
+
+    # Remove faces at non-manifold edges (an edge shared by 3+ faces means
+    # two fill patches both covered the same junction edge).  Prefer keeping
+    # original-mesh faces by removing the fill faces (highest indices).
+    unique_e, inv_e, counts_e = np.unique(result.edges_sorted, axis=0,
+                                          return_inverse=True, return_counts=True)
+    if (counts_e > 2).any():
+        bad_edge_mask = counts_e[inv_e.reshape(-1, 3)] > 2  # (F, 3)
+        bad_face = bad_edge_mask.any(axis=1)
+        if bad_face.any():
+            n_orig_faces = len(mesh.faces)
+            # Prefer removing fill faces (index >= n_orig_faces) over original
+            fill_bad = bad_face & (np.arange(len(result.faces)) >= n_orig_faces)
+            if fill_bad.any():
+                result.update_faces(~fill_bad)
+            else:
+                result.update_faces(~bad_face)
+            result.remove_unreferenced_vertices()
+
+    result = tidy(result)
+
+    # Final fallback: if multi-ring faces created self-intersections, let
+    # pymeshfix resolve them (it only touches the intersecting triangles).
+    if not result.is_watertight:
+        try:
+            import pymeshfix
+            tin = pymeshfix.PyTMesh()
+            tin.load_array(np.asarray(result.vertices, dtype=np.float64),
+                           np.asarray(result.faces, dtype=np.int32))
+            tin.clean()
+            vf, ff = tin.return_arrays()
+            result = trimesh.Trimesh(vf, ff, process=True)
+        except Exception:
+            pass  # leave as-is if pymeshfix is unavailable
+
+    filled_count = len(small)
+    return result, f"Filled {filled_count} hole{'s' if filled_count != 1 else ''} with curvature-following patches"
+
+
+def mean_curvature(mesh: trimesh.Trimesh) -> np.ndarray:
+    """Discrete mean curvature at each vertex, in mm^-1.
+
+    Uses the cotangent-weighted Laplacian (Meyer et al. 2003).  Positive =
+    convex, negative = concave.  Returns a 1-D array of length n_vertices.
+    """
+    v = np.asarray(mesh.vertices, dtype=np.float64)
+    f = np.asarray(mesh.faces, dtype=np.int64)
+
+    # Cotangent weights
+    e0 = v[f[:, 2]] - v[f[:, 1]]
+    e1 = v[f[:, 0]] - v[f[:, 2]]
+    e2 = v[f[:, 1]] - v[f[:, 0]]
+
+    def _cot(a, b):
+        c = np.linalg.norm(np.cross(a, b), axis=1)
+        c = np.where(c < 1e-12, 1e-12, c)
+        return (a * b).sum(axis=1) / c
+
+    cot0 = _cot(-e1, e2)   # at vertex f[:,0]
+    cot1 = _cot(-e2, e0)   # at vertex f[:,1]
+    cot2 = _cot(-e0, e1)   # at vertex f[:,2]
+
+    n_v = len(v)
+    Lv = np.zeros_like(v)  # Laplacian * v, accumulate weighted position sums
+    W = np.zeros(n_v)       # sum of weights per vertex
+
+    for fi in range(len(f)):
+        i, j, k = int(f[fi, 0]), int(f[fi, 1]), int(f[fi, 2])
+        w0, w1, w2 = max(0.0, cot0[fi]), max(0.0, cot1[fi]), max(0.0, cot2[fi])
+        Lv[j] += w2 * (v[k] - v[j])
+        Lv[k] += w2 * (v[j] - v[k])
+        Lv[i] += w1 * (v[k] - v[i])
+        Lv[k] += w1 * (v[i] - v[k])
+        Lv[i] += w0 * (v[j] - v[i])
+        Lv[j] += w0 * (v[i] - v[j])
+        W[i] += w1 + w0
+        W[j] += w2 + w0
+        W[k] += w2 + w1
+
+    W = np.where(W < 1e-12, 1e-12, W)
+    H_vec = Lv / W[:, None]  # (mean curvature normal) per vertex
+    H_mag = np.linalg.norm(H_vec, axis=1)
+
+    # Sign convention: for a convex surface the Laplacian (mean curvature normal)
+    # points INWARD (toward the centre of curvature), opposite to the outward
+    # vertex normal.  So convex → H_vec · n < 0.  Negate so that convex = positive.
+    normals = np.asarray(mesh.vertex_normals, dtype=np.float64)
+    sign = -np.sign((H_vec * normals).sum(axis=1))
+    sign = np.where(sign == 0, 1.0, sign)
+    return (sign * H_mag).astype(np.float64)
+
+
+def surface_deviation(mesh: trimesh.Trimesh, reference: trimesh.Trimesh) -> np.ndarray:
+    """Per-vertex distance from ``mesh`` to the nearest face of ``reference``.
+
+    Returns a 1-D array of distances in mm, one per vertex in ``mesh``.
+    """
+    from scipy.spatial import cKDTree
+
+    _, dist_v, _ = trimesh.proximity.closest_point(reference, mesh.vertices)
+    return dist_v.astype(np.float64)
+
+
 def self_intersecting_faces(mesh: trimesh.Trimesh) -> np.ndarray:
     """Indices of faces that cut through faces of the same piece.
 

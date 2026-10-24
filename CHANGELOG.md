@@ -1,5 +1,68 @@
 # Changes
 
+## 0.3.0 (unreleased)
+
+Twelve new actions for scan-to-print, repair, casting and mold making:
+
+- **Check if a mold can be made** (`analyse_mold`): Analyses a part for casting
+  feasibility — reports how many mold pieces are needed, flags tiny details that
+  won't print in the cavity, and warns about walls that would grip the cast part.
+  Simple shapes return a one-click green light; complex shapes get a plain-English
+  checklist with sensible defaults.
+- **Make a casting mold** (`make_mold`): Builds a split mold ready to print in FDM
+  or resin — two (or more) halves with a tapered pour hole, air-vent channels,
+  alignment pins and bolt holes around the parting flange. Optional printable
+  C-clamps (print two copies) hold the halves together while the material sets.
+  Automatically smooths sub-nozzle details for a cleaner cavity, chooses wall
+  thickness from the part size, and lays all pieces side-by-side in the viewer.
+  Parts with undercuts get a 3-piece mold automatically: top piece plus two
+  side pieces that pull out sideways to release the undercut.
+
+- **Even out triangles** (`remesh`): Rebuilds the mesh so all triangles are
+  roughly the same size — evenly spaced across the whole surface. Useful after
+  scanning (where the scanner packs triangles tightly in some areas and leaves
+  gaps in others), before sculpting, or before printing a surface with very
+  fine detail. Shape stays the same; only the triangle layout changes.
+- **Photo-guided repair** (redesigned): Now takes the photo directly as a
+  base64-encoded image — no separate upload step needed. The frontend encodes
+  the photo before sending it, so the user just picks the file and clicks match
+  points.
+
+Ten new actions for the scan-to-print and repair workflow:
+
+- **Smooth scan** (`smooth_scan`): Taubin filter at light, medium or heavy strength.
+  Removes scanner noise without shrinking the model.
+- **Remove base** (`remove_base`): Detects the flat scan table via RANSAC-style
+  horizontal face clustering and cuts it away, with an adjustable margin.
+- **Seam polish** (`seam_polish`): Cleans up rough fracture surfaces after a
+  join — removes micro-gaps and fills tiny holes left by the join step.
+- **Fill curved** (`fill_curved`): Closes holes with a smooth patch using a
+  cotangent Laplacian. Creates multi-ring fills for larger holes so the Laplacian
+  can propagate curvature inward from the boundary ring. Falls back to pymeshfix
+  for self-intersections the Laplacian step cannot resolve.
+- **Deviation map** (`deviation_map`): Colours each vertex by its distance from
+  a reference scan, letting you see exactly what the repair changed.
+- **Scan to print** (`scan_to_print`): One-click chain — remove base, smooth,
+  reduce detail, cleanup, make solid — producing a watertight print-ready solid.
+- **Curvature map** (`curvature_map`): Colours the model by local mean curvature
+  using the discrete cotangent-weighted Laplacian (Meyer et al. 2003).
+  Orange = convex bumps, blue = concave dents, grey = flat.
+- **Symmetry repair** (`symmetry_repair`): Detects the bilateral-symmetry plane
+  via PCA and damage-score analysis, mirrors the intact half, and replaces the
+  damaged side. Works for motorcycle fairings, brackets, housings, and any
+  part that should be symmetric but has one side broken or missing.
+  Uses manifold3d plane-split for a clean seam; falls back to face-centroid
+  splitting for open/damaged input meshes.
+- **Repair wound** (`repair_wound`): Designed for break wounds where the
+  missing piece is lost. Smooths the jagged wound boundary with a Taubin
+  pass, then fills the wound with a curvature-following patch. Different from
+  Fill holes — aimed at break wounds, not scan artefacts.
+- **Photo-guided repair** (`photo_repair`): Upload a photo of the intact
+  part, click 4+ matching points on the photo and on the scan, and MeshRight
+  estimates the camera position via DLT projection, finds regions where the
+  scan is missing geometry the photo shows as present, and fills them.
+  No third-party vision library needed — uses numpy, scipy and PIL.
+
 ## 0.2.1
 
 - **Hollow for resin is much more reliable.** The hollowed shell now stays

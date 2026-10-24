@@ -60,3 +60,6 @@ packages = ["src/meshright"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: downloads real models from the internet; deselect with -m 'not slow'",
+]
