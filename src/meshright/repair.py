@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 import trimesh
 
-from .analysis import DEBRIS_FACE_SHARE
+from .analysis import small_pieces
 
 # An opening is the model's open edge (a face scan, a relief, a mask) rather
 # than a gap when it spans most of the model and the model is shallow behind
@@ -150,9 +150,7 @@ def _hole_info(mesh: trimesh.Trimesh) -> list[Hole]:
 def _debris_mask(mesh: trimesh.Trimesh) -> np.ndarray:
     """True for faces that belong to small loose pieces."""
     labels = trimesh.graph.connected_component_labels(mesh.face_adjacency, node_count=len(mesh.faces))
-    sizes = np.bincount(labels)
-    small = sizes < max(1, DEBRIS_FACE_SHARE * sizes.max())
-    return small[labels]
+    return small_pieces(mesh, labels)[labels]
 
 
 def surface_change(before: trimesh.Trimesh, after: trimesh.Trimesh, samples: int = 20000) -> float:
@@ -226,6 +224,30 @@ def tidy(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     mesh.update_faces(mesh.unique_faces() & mesh.nondegenerate_faces(height=1e-9))
     mesh.remove_unreferenced_vertices()
     mesh.merge_vertices()
+    return mesh
+
+
+def _collapse_slivers(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Remove zero-area triangles by collapsing each one's shortest edge. Deleting them
+    outright would leave a hole, so the change is kept only if the surface stays closed."""
+    flat = np.nonzero(mesh.area_faces <= 1e-12)[0]
+    if not len(flat):
+        return mesh
+    faces = mesh.faces.copy()
+    vertices = mesh.vertices
+    remap = np.arange(len(vertices))
+    for f in flat:
+        tri = remap[faces[f]]
+        pairs = [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])]
+        a, b = min(pairs, key=lambda p: np.linalg.norm(vertices[p[0]] - vertices[p[1]]))
+        if a != b:
+            remap[remap == b] = a
+    faces = remap[faces]
+    faces = faces[(faces[:, 0] != faces[:, 1]) & (faces[:, 1] != faces[:, 2]) & (faces[:, 0] != faces[:, 2])]
+    trial = trimesh.Trimesh(vertices, faces, process=False)
+    trial.remove_unreferenced_vertices()
+    if trial.is_watertight == mesh.is_watertight and trial.is_winding_consistent and len(trial.faces) > 0:
+        return trial
     return mesh
 
 
@@ -379,9 +401,10 @@ def _fix_piece(piece: trimesh.Trimesh, bad: np.ndarray) -> trimesh.Trimesh:
     whole = _from_meshfix(tin)
     if _similar(piece, whole, bad):
         return whole
-    local = _local_fix(piece, bad)
-    if local is not None and _similar(piece, local, bad):
-        return local
+    for rings in (2, 4, 6):  # a wider patch when the first one cannot be sewn up cleanly
+        local = _local_fix(piece, bad, rings)
+        if local is not None and _similar(piece, local, bad):
+            return local
     return piece
 
 
@@ -514,15 +537,27 @@ def cleanup(
                 gaps = [h for h in _hole_info(mesh) if h.fill or close_open_edge]
                 mesh = fill_holes(mesh, [Hole(h.edges, h.perimeter_mm, h.across_mm, True, "") for h in gaps])
 
+    if fill and (np.unique(mesh.edges_sorted, axis=0, return_counts=True)[1] > 2).any():
+        mesh = heal_small_faults(mesh)  # a big cap can pinch where it meets the outline
+
     before = mesh.copy()
     mesh = fix_normals(mesh)
     if not np.array_equal(before.faces, mesh.faces):
         done.append("turned wrong-way triangles outwards")
 
-    if not done:
-        return mesh, "Cleanup found nothing to change"
+    mesh = _collapse_slivers(mesh)
     if reduce and plan.reduce_to or crossing_fixed:
         done.append(describe_change(surface_change(reference, mesh)))
+    if fill and not close_open_edge:
+        left = [h for h in _hole_info(mesh) if not h.fill]
+        if left:
+            widest = max(h.across_mm for h in left)
+            done.append(
+                f"left a {widest:.3g} mm opening alone because it looks like the model's own open edge "
+                "(tick 'Also close a big opening' to close it)"
+            )
+    if not done:
+        return mesh, "Cleanup found nothing to change"
     return mesh, "Cleanup: " + "; ".join(done)
 
 
@@ -579,22 +614,47 @@ def make_solid(mesh: trimesh.Trimesh, detail_mm: float = 0.0) -> tuple[trimesh.T
     return solid, f"Rebuilt as a closed solid with {pitch:.2g} mm detail ({len(solid.faces):,} triangles); {moved}"
 
 
+def _survives_stl(mesh: trimesh.Trimesh) -> bool:
+    """Is the mesh still closed once its numbers are stored as 32-bit, as an STL does?"""
+    v32 = mesh.vertices.astype(np.float32)
+    unique, inverse = np.unique(v32, axis=0, return_inverse=True)
+    faces = inverse.reshape(-1)[mesh.faces]
+    if (faces[:, 0] == faces[:, 1]).any() or (faces[:, 1] == faces[:, 2]).any() or (faces[:, 0] == faces[:, 2]).any():
+        return False
+    return trimesh.Trimesh(unique.astype(np.float64), faces, process=False).is_watertight
+
+
+def _stl_safe(mesh: trimesh.Trimesh) -> trimesh.Trimesh | None:
+    """The mesh as an STL file would store it, or None if that opens it. Triangles that
+    shrink to nothing at 32-bit are dropped: removing a collapsed edge keeps a mesh closed."""
+    unique, inverse = np.unique(mesh.vertices.astype(np.float32), axis=0, return_inverse=True)
+    faces = inverse.reshape(-1)[mesh.faces]
+    keep = (faces[:, 0] != faces[:, 1]) & (faces[:, 1] != faces[:, 2]) & (faces[:, 0] != faces[:, 2])
+    out = trimesh.Trimesh(unique.astype(np.float64), faces[keep], process=False)
+    return out if out.is_watertight else None
+
+
 def grid_to_mesh(grid: np.ndarray, origin: np.ndarray, pitch: float) -> trimesh.Trimesh:
     """Smooth closed surface around the filled cells of a voxel grid."""
     import mcubes
     from scipy import ndimage
 
     field = ndimage.gaussian_filter(grid.astype(np.float32), 1.0)
-    vertices, faces = mcubes.marching_cubes(field, 0.5)
-    vertices = vertices * pitch + origin + pitch / 2
-    solid = trimesh.Trimesh(vertices, faces, process=True)
-    # Marching cubes now and then leaves a stray triangle pinched onto the
-    # surface where the shape is very thin.
-    solid = tidy(heal_small_faults(solid))
-    trimesh.repair.fix_normals(solid, multibody=True)
-    if len(solid.faces) > COMFORTABLE_TRIANGLES:
-        solid = tidy(reduce_detail(solid, COMFORTABLE_TRIANGLES))
+    # A level that lands almost exactly on a grid value makes hairline triangles that
+    # an STL file cannot store, so move the level a touch until the surface is sound.
+    for level in (0.5, 0.503, 0.497, 0.508, 0.492):
+        vertices, faces = mcubes.marching_cubes(field, level)
+        vertices = vertices * pitch + origin + pitch / 2
+        solid = trimesh.Trimesh(vertices, faces, process=True)
+        # Marching cubes now and then leaves a stray triangle pinched onto the
+        # surface where the shape is very thin.
+        solid = tidy(heal_small_faults(solid))
         trimesh.repair.fix_normals(solid, multibody=True)
+        if len(solid.faces) > COMFORTABLE_TRIANGLES:
+            solid = tidy(reduce_detail(solid, COMFORTABLE_TRIANGLES))
+            trimesh.repair.fix_normals(solid, multibody=True)
+        if _survives_stl(solid):
+            break
     return solid
 
 
@@ -660,33 +720,158 @@ def hollow(mesh: trimesh.Trimesh, wall_mm: float, drain_holes: bool, hole_mm: fl
     pad = 3
     surface, origin = _voxelize(mesh, pitch, pad)
     inside = ndimage.binary_fill_holes(ndimage.binary_dilation(surface, iterations=1))
-    depth = ndimage.distance_transform_edt(inside) * pitch
-    cavity = depth > wall_mm + pitch
-    if cavity.sum() < 27:
-        raise ValueError(f"The model is too thin to hollow with {wall_mm:g} mm walls.")
-    inner = grid_to_mesh(cavity, origin, pitch)
-    try:
-        hollowed = solid - _to_manifold(inner)
-    except CutError:
-        raise ValueError("Could not hollow this model. Try Make Solid first.") from None
+    # Distance to the real surface, not to the voxel edge: voxel distances are off by
+    # up to a cell, which left walls thinner than asked (down to nothing at thin tips).
+    from scipy.spatial import cKDTree
 
+    count = int(min(6e6, max(2e5, mesh.area / (pitch / 4) ** 2)))
+    samples = np.vstack([trimesh.sample.sample_surface(mesh, count, seed=1)[0], mesh.vertices])
+    tree = cKDTree(samples)
+    # Distance to the nearest surface of any kind, so inner shells keep their own wall too.
+    coarse = ndimage.distance_transform_edt(~surface) * pitch
+    # Only cells near the wall line need the exact distance; deeper ones are cavity for sure.
+    band = inside & (coarse > wall_mm * 0.5)
+    near = np.argwhere(band & (coarse <= wall_mm + 3 * pitch))
+    distance = np.where(band, np.float32(1e6), np.float32(0))
+    if len(near):
+        distance[tuple(near.T)] = tree.query(origin + (near + 0.5) * pitch, workers=-1)[0]
+
+    margin = 0.35 * pitch  # marching cubes pulls the surface a little off the cell edge
+    for _ in range(5):
+        cavity = inside & (distance >= wall_mm + margin)
+        cavity = _drop_small_pockets(cavity, pitch, 100.0)
+        if cavity.sum() < 27:
+            raise ValueError(f"The model is too thin to hollow with {wall_mm:g} mm walls.")
+        inner = grid_to_mesh(cavity, origin, pitch)
+        thinnest = float(tree.query(inner.vertices, workers=-1)[0].min())
+        if thinnest >= 0.97 * wall_mm:
+            break
+        margin += wall_mm - thinnest + 0.02 * pitch
+    # The outer skin plus the cavity turned inside out. No boolean is needed, so no
+    # new points appear and the shell saves cleanly as STL.
+    result = trimesh.Trimesh(
+        np.vstack([mesh.vertices, inner.vertices]),
+        np.vstack([mesh.faces, inner.faces[:, ::-1] + len(mesh.vertices)]),
+        process=False,
+    )
+
+    spots = _drain_spots(cavity, origin, pitch, hole_mm) if drain_holes else []
     holes = 0
-    if drain_holes:
-        # Drain from the lowest points of the hollow, straight down through the bottom.
-        low = inner.vertices[inner.vertices[:, 2] <= inner.bounds[0][2] + max(wall_mm, 2 * pitch)]
-        spots = [low[np.argmin(low[:, 0])], low[np.argmax(low[:, 0])]]
-        if np.linalg.norm(spots[0] - spots[1]) < 3 * hole_mm:
-            spots = spots[:1]
-        bottom = float(mesh.bounds[0][2])
-        for spot in spots:
-            length = spot[2] - bottom + 2 * pitch + 1.0
-            drill = manifold3d.Manifold.cylinder(length, hole_mm / 2, hole_mm / 2, 32, False)
-            hollowed = hollowed - drill.transform(_affine(np.eye(3), (spot[0], spot[1], bottom - 1.0)))
-            holes += 1
+    bottom = float(mesh.bounds[0][2])
+    skin = result
 
-    result = _to_mesh(hollowed)
+    def drill_all(spot_list: list) -> trimesh.Trimesh | None:
+        """Drill every spot straight up from the bottom. Cutting makes points that can land
+        closer together than an STL file can tell apart (32-bit numbers), which opens the
+        shell on reload, so raise manifold's merge tolerance step by step and keep the first
+        cut that saves cleanly and does not cross itself."""
+        try:
+            shell = _to_manifold(skin)
+        except CutError:
+            return None
+        fallback = None
+        for tolerance in (0.0, 0.01, 0.03, 0.06, 0.1):
+            carved = shell.set_tolerance(tolerance) if tolerance else shell
+            for spot in spot_list:
+                length = spot[2] - bottom + 2 * pitch + 1.0
+                drill = manifold3d.Manifold.cylinder(length, hole_mm / 2, hole_mm / 2, 32, False)
+                if tolerance:
+                    drill = drill.set_tolerance(tolerance)
+                carved = carved - drill.transform(_affine(np.eye(3), (spot[0], spot[1], bottom - 1.0)))
+            candidate = _stl_safe(_to_mesh(carved))
+            if candidate is None:
+                continue
+            if fallback is None:
+                fallback = candidate
+            if not len(self_intersecting_faces(candidate)):
+                return candidate
+        return fallback
+
+    def sealed_pockets(shape: trimesh.Trimesh) -> list[trimesh.Trimesh]:
+        # Sealed pockets are voids (negative volume). Specks under 1 mm3 are rounding debris.
+        return [part for part in shape.split(only_watertight=False) if part.volume < -1.0]
+
+    if spots:
+        drilled = drill_all(spots)
+        # A pocket the first holes missed (a spout, a leg) gets its own hole at its lowest point.
+        for _ in range(3):
+            if drilled is None:
+                break
+            missed = sealed_pockets(drilled)
+            if not missed:
+                break
+            extra = []
+            for pocket in missed:
+                low = pocket.vertices[pocket.vertices[:, 2] < pocket.bounds[0][2] + pitch]
+                extra.append(np.array([low[:, 0].mean(), low[:, 1].mean(), pocket.bounds[0][2] + 0.5 * pitch]))
+            more = drill_all(spots + extra)
+            if more is None:
+                break
+            drilled, spots = more, spots + extra
+        if drilled is not None:
+            result, holes = drilled, len(spots)
+
+    undrained = len(sealed_pockets(result)) if holes else 0
+
     saved = 1 - result.volume / mesh.volume if mesh.volume > 0 else 0
     receipt = f"Hollowed with {wall_mm:g} mm walls, using about {saved:.0%} less resin"
     if holes:
         receipt += f"; added {holes} drain hole{'s' if holes != 1 else ''} ({hole_mm:g} mm) at the bottom"
+    if undrained:
+        receipt += (f". {undrained} closed pocket{'s' if undrained != 1 else ''} inside could not be drained: "
+                    "resin would be trapped there")
+    if drain_holes and not holes:
+        receipt += (". Drain holes could not be cut cleanly on this model, so the hollow is sealed: "
+                    "add a drain hole in your slicer before printing")
     return result, receipt
+
+
+def _drop_small_pockets(cavity: np.ndarray, pitch: float, min_mm3: float) -> np.ndarray:
+    """Leave pockets under ``min_mm3`` solid: they are not worth a drain hole. Pockets are
+    counted on the smoothed grid the hollow is cut from, where a thin neck pinches off
+    the tip of a bigger pocket into a speck of its own."""
+    from scipy import ndimage
+
+    for _ in range(2):
+        smooth = ndimage.gaussian_filter(cavity.astype(np.float32), 1.0) > 0.5
+        labels, count = ndimage.label(smooth)
+        if count == 0:
+            return cavity
+        volumes = np.bincount(labels.ravel(), minlength=count + 1) * pitch**3
+        small = (volumes < min_mm3)[labels] & (labels > 0)
+        if count > 1 and small.any() and not small.all():
+            cavity = cavity & ~ndimage.binary_dilation(small, iterations=2)
+        else:
+            break
+    return cavity
+
+
+def _drain_spots(cavity: np.ndarray, origin: np.ndarray, pitch: float, hole_mm: float) -> list[np.ndarray]:
+    """Where to drill up into the hollow. Each separate pocket gets a spot at
+    its lowest level, kept away from its edge so the drill is sure to reach
+    it; the biggest pocket gets two, far apart, so air can get in."""
+    from scipy import ndimage
+
+    # The hollow is cut from the smoothed grid (see grid_to_mesh), where a thin
+    # neck can pinch a pocket off, so find the pockets in that same grid.
+    cavity = ndimage.gaussian_filter(cavity.astype(np.float32), 1.0) > 0.5
+    labels, count = ndimage.label(cavity)
+    if count == 0:
+        return []
+    sizes = np.bincount(labels.ravel())[1:]
+    reach = max(1, int(np.ceil(hole_mm / 2 / pitch)))
+    spots: list[np.ndarray] = []
+    for rank, pocket in enumerate(np.argsort(sizes)[::-1][:4]):
+        if sizes[pocket] < 27:
+            continue
+        region = labels == pocket + 1
+        floor = int(np.nonzero(region.any(axis=(0, 1)))[0][0])
+        layer = region[:, :, floor:floor + 3].any(axis=2)
+        core = ndimage.binary_erosion(layer, iterations=reach)
+        xs, ys = np.nonzero(core if core.any() else layer)
+        picks = [np.argmin(xs), np.argmax(xs)] if rank == 0 else [int(len(xs) // 2)]
+        for i in picks:
+            spot = origin + (np.array([xs[i], ys[i], floor + 1]) + 0.5) * pitch
+            if all(np.linalg.norm(spot[:2] - other[:2]) >= 3 * hole_mm for other in spots):
+                spots.append(spot)
+    return spots

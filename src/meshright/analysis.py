@@ -29,6 +29,24 @@ MAX_HIGHLIGHT_SEGMENTS = 100_000
 # A disconnected piece smaller than this share of the model's faces counts as
 # "floating debris" (scan noise, stray triangles) rather than a real part.
 DEBRIS_FACE_SHARE = 0.01
+DEBRIS_SIZE_SHARE = 0.2  # a piece this big next to the main one is a part, not scan noise
+
+
+def small_pieces(mesh: trimesh.Trimesh, labels: np.ndarray) -> np.ndarray:
+    """Per piece: is it loose debris? Few triangles next to the main piece (a hollowed
+    model has many more, so triangles alone are not enough) and also small in size."""
+    sizes = np.bincount(labels)
+    few = sizes < max(1, DEBRIS_FACE_SHARE * sizes.max())
+    if not few.any():
+        return few
+    corners = mesh.vertices[mesh.faces].reshape(-1, 3)
+    which = np.repeat(labels, 3)
+    low = np.full((len(sizes), 3), np.inf)
+    high = np.full((len(sizes), 3), -np.inf)
+    np.minimum.at(low, which, corners)
+    np.maximum.at(high, which, corners)
+    reach = np.linalg.norm(high - low, axis=1)
+    return few & (reach < DEBRIS_SIZE_SHARE * reach[np.argmax(sizes)])
 
 # Highest score a model with a blocking error can get.
 UNPRINTABLE_SCORE_CAP = 59
@@ -534,7 +552,7 @@ def analyze(mesh: trimesh.Trimesh, crossing: np.ndarray | None | bool = True, pr
     labels = trimesh.graph.connected_component_labels(mesh.face_adjacency, node_count=faces_total)
     piece_sizes = np.bincount(labels)
     pieces = len(piece_sizes)
-    debris = int(np.count_nonzero(piece_sizes < max(1, DEBRIS_FACE_SHARE * piece_sizes.max())))
+    debris = int(np.count_nonzero(small_pieces(mesh, labels)))
     if debris:
         issues.append(Issue(
             code="floating_debris",
