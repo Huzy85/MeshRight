@@ -58,6 +58,7 @@
 html, body {
   margin: 0;
   height: 100%;
+  overflow: hidden; /* the panel and lists scroll, the page never does */
   background: var(--bg);
   color: var(--text);
   font: 14px/1.45 var(--font);
@@ -905,15 +906,17 @@ body[data-mode="advanced"] #card { display: none !important; }
   border-bottom: 1px solid var(--separator);
 }
 .panel-bar strong { font-size: 13px; color: var(--secondary); font-weight: 600; }
+/* Sits in main, not inside the scrolling panel, so it stays put when the panel scrolls. */
 #panel-resize {
   position: absolute;
-  left: 0;
+  right: calc(var(--panel-w, 360px) - 4px);
   top: 0;
   bottom: 0;
   width: 8px;
   cursor: col-resize;
   z-index: 3;
 }
+body[data-mode="advanced"].panel-hidden #panel-resize { display: none; }
 #panel-resize:hover, body.resizing #panel-resize { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 body.resizing { cursor: col-resize; user-select: none; }
 body.resizing #viewer { pointer-events: none; }
