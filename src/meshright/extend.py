@@ -4,6 +4,12 @@ The break face is the starting ring. Cross-sections just behind it show which
 way the part was heading, how fast it bent and how fast it narrowed, and the
 ring is swept forward along that path. The new skin shares the break's edge
 vertices, so the result is closed with no boolean step.
+
+A scan of a broken part often has no flat break face at all, just an open
+edge where the surface stops (a snapped tube, a handle scanned only so far).
+Clicking near such an edge continues the surface from that edge instead: the
+open rim is the ring, the sweep direction is the way the surface was heading
+at the rim, and the far end is left open, as the rim was.
 """
 
 from __future__ import annotations
@@ -29,16 +35,20 @@ def _break_face(mesh: trimesh.Trimesh, point) -> np.ndarray:
     return labels == labels[start]
 
 
-def _loops(faces: np.ndarray) -> list[list[int]]:
-    """Ordered vertex rings around a patch, each edge in the patch's own direction."""
+def _open_edges(faces: np.ndarray) -> np.ndarray:
+    """Edges used by only one of these faces, each in its face's own direction."""
     directed = np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
     undirected = np.sort(directed, axis=1)
     _, inverse, counts = np.unique(undirected, axis=0, return_inverse=True, return_counts=True)
-    edges = directed[counts[inverse.reshape(-1)] == 1]
+    return directed[counts[inverse.reshape(-1)] == 1]
+
+
+def _loops(faces: np.ndarray, what: str = "The break face") -> list[list[int]]:
+    """Ordered vertex rings around a patch, each edge in the patch's own direction."""
     following = {}
-    for a, b in edges:
+    for a, b in _open_edges(faces):
         if int(a) in following:
-            raise ExtendError("The break face touches itself, so its outline cannot be followed.")
+            raise ExtendError(f"{what} touches itself, so its outline cannot be followed.")
         following[int(a)] = int(b)
     loops, seen = [], set()
     for first in following:
@@ -50,9 +60,68 @@ def _loops(faces: np.ndarray) -> list[list[int]]:
             ring.append(here)
             here = following.get(here)
             if here is None:
-                raise ExtendError("The break face is not a closed outline.")
+                raise ExtendError(f"{what} is not a closed outline.")
         loops.append(ring)
     return loops
+
+
+def _rim_near(mesh: trimesh.Trimesh, point) -> list[int] | None:
+    """The open edge loop the point is next to (within 3% of the model's size),
+    or None when the point is nowhere near an open edge. The loop comes back
+    in the order the new skin must run: the opposite of the faces' own
+    direction along the rim, as the skin continues the surface rather than
+    replacing a patch of it."""
+    edges = _open_edges(mesh.faces)
+    if len(edges) == 0:
+        return None
+    rim_ids = np.unique(edges)
+    distance, nearest = cKDTree(mesh.vertices[rim_ids]).query(point)
+    if distance > 0.03 * float(mesh.extents.max()):
+        return None
+    start = int(rim_ids[nearest])
+    following = {}
+    for a, b in edges:
+        following.setdefault(int(a), int(b))
+    ring, here = [], start
+    while here not in ring:
+        ring.append(here)
+        here = following.get(here)
+        if here is None:
+            raise ExtendError("The open edge near that point does not go all the way round, so it cannot be continued. Try Clean up first.")
+    if here != start:
+        raise ExtendError("The open edge near that point touches itself, so it cannot be continued. Try Clean up first.")
+    return ring[::-1]
+
+
+def _rim_direction(mesh: trimesh.Trimesh, ring: list[int]) -> np.ndarray:
+    """Which way the surface was heading when it stopped at this rim: the mean
+    direction from each rim vertex's inner neighbours out to the vertex. Falls
+    back to the rim's own plane normal, pointing away from those neighbours."""
+    on_rim = np.zeros(len(mesh.vertices), dtype=bool)
+    on_rim[ring] = True
+    neighbours = mesh.vertex_neighbors
+    pulls, inner_points = [], []
+    for v in ring:
+        inner = [n for n in neighbours[v] if not on_rim[n]]
+        if not inner:
+            continue
+        mean = mesh.vertices[inner].mean(axis=0)
+        inner_points.append(mean)
+        pull = mesh.vertices[v] - mean
+        if np.linalg.norm(pull) > 0:
+            pulls.append(pull / np.linalg.norm(pull))
+    direction = np.mean(pulls, axis=0) if pulls else np.zeros(3)
+    points = mesh.vertices[ring]
+    _, _, axes = np.linalg.svd(points - points.mean(axis=0), full_matrices=False)
+    plane_normal = axes[-1]
+    if inner_points and plane_normal @ (points.mean(axis=0) - np.mean(inner_points, axis=0)) < 0:
+        plane_normal = -plane_normal
+    # A rim around a hole in a flat surface pulls outwards in every direction
+    # at once and the mean cancels out; then the only sensible way on is
+    # straight out of the hole.
+    if np.linalg.norm(direction) < 0.3:
+        return plane_normal
+    return direction / np.linalg.norm(direction)
 
 
 def _slice_stats(mesh, origin, normal, centre, reach):
@@ -110,18 +179,29 @@ def _trend(mesh, centre, normal, e1, e2, patch_points, follow_curve, taper):
 
 
 def extend_break(mesh: trimesh.Trimesh, point, length_mm: float, follow_curve: bool = True, taper: bool = True):
-    """Rebuild a snapped-off end beyond the flat break face nearest the point."""
-    patch = _break_face(mesh, point)
-    faces = mesh.faces[patch]
-    loops = _loops(faces)
-    if not loops:
-        raise ExtendError("That is not a flat break face. Click on the flat surface where the piece snapped off.")
-    areas = mesh.area_faces[patch]
-    normal = (mesh.face_normals[patch] * areas[:, None]).sum(axis=0)
-    normal /= np.linalg.norm(normal)
-    patch_ids = np.unique(faces)
-    points = mesh.vertices[patch_ids]
-    centre = (mesh.triangles_center[patch] * areas[:, None]).sum(axis=0) / areas.sum()
+    """Rebuild a snapped-off end beyond the flat break face nearest the point,
+    or continue the surface from an open edge when the point is next to one."""
+    rim = _rim_near(mesh, point)
+    if rim is not None:
+        patch = np.zeros(len(mesh.faces), dtype=bool)
+        faces = mesh.faces[patch]
+        loops = [rim]
+        patch_ids = np.asarray(rim)
+        points = mesh.vertices[patch_ids]
+        centre = points.mean(axis=0)
+        normal = _rim_direction(mesh, rim)
+    else:
+        patch = _break_face(mesh, point)
+        faces = mesh.faces[patch]
+        loops = _loops(faces)
+        if not loops:
+            raise ExtendError("That is not a flat break face. Click on the flat surface where the piece snapped off.")
+        areas = mesh.area_faces[patch]
+        normal = (mesh.face_normals[patch] * areas[:, None]).sum(axis=0)
+        normal /= np.linalg.norm(normal)
+        patch_ids = np.unique(faces)
+        points = mesh.vertices[patch_ids]
+        centre = (mesh.triangles_center[patch] * areas[:, None]).sum(axis=0) / areas.sum()
     spread = points - centre
     spread -= np.outer(spread @ normal, normal)
     _, _, axes = np.linalg.svd(spread, full_matrices=False)
@@ -173,13 +253,22 @@ def extend_break(mesh: trimesh.Trimesh, point, length_mm: float, follow_curve: b
         count += len(inner)
     cap = [[at(steps, v) if v in where else inner_new[v] for v in tri] for tri in faces]
     keep = mesh.faces[~patch]
-    result = trimesh.Trimesh(np.vstack(vertices), np.vstack([keep, new_faces, cap]), process=False)
+    result = trimesh.Trimesh(np.vstack(vertices), np.vstack([keep, np.asarray(new_faces, dtype=np.int64).reshape(-1, 3), np.asarray(cap, dtype=np.int64).reshape(-1, 3)]), process=False)
     result.remove_unreferenced_vertices()
-    if not result.is_watertight:
+    # A closed model must still be closed. An open one (a scan with an open
+    # bottom, or a rim being continued, whose far end stays open like the rim
+    # was) must have exactly as many open edges as before, and the new skin
+    # must face the same way as the surface it grows from.
+    joined = len(_open_edges(result.faces)) == len(_open_edges(mesh.faces))
+    if mesh.is_watertight and not result.is_watertight:
+        joined = False
+    if mesh.is_winding_consistent and not result.is_winding_consistent:
+        joined = False
+    if not joined:
         raise ExtendError("The rebuilt end did not join up cleanly, so nothing was changed.")
     end = normal + (b + a * length_mm)[0] * e1 + (b + a * length_mm)[1] * e2
     turned = np.degrees(np.arccos(np.clip(normal @ end / np.linalg.norm(end), -1, 1)))
-    note = f"Rebuilt the broken end {length_mm:g} mm long"
+    note = f"Continued the open edge {length_mm:g} mm" if rim is not None else f"Rebuilt the broken end {length_mm:g} mm long"
     if follow_curve and turned > 0.5:
         note += f", following a bend of {turned:.0f} degrees"
     if taper and abs(g) > 1e-4:

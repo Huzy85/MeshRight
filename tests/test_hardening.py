@@ -276,3 +276,59 @@ def test_each_mold_feature_reports_when_its_boolean_fails(monkeypatch):
         "Bolt holes could not be cut in the top half",
         "The clamp's slot could not be cut, so the clamp is a solid block",
     ]
+
+
+# ------------------------------------------- bugs found by the bad-scan tests
+
+
+def test_make_solid_copes_with_a_model_saved_in_metres():
+    """A 0.2 mm voxel floor turned a metre-scale scan (a 0.15 "mm" bunny) into
+    a single voxel and Make Solid refused it. Small models now get at least
+    150 cells across."""
+    tiny = trimesh.creation.icosphere(subdivisions=3, radius=0.02)
+    tiny = trimesh.Trimesh(tiny.vertices, tiny.faces[tiny.triangles_center[:, 2] > -0.012], process=False)
+    assert not tiny.is_watertight
+    solid, note = run_action(tiny, "make_solid", {"detail_mm": 0.0})
+    assert solid.is_watertight and solid.volume > 0
+    assert abs(solid.extents.max() - 0.04) < 0.004  # still the same size, not blown up or shrunk
+    # Models of normal size keep the 0.2 mm floor.
+    cube_solid, note = run_action(box(40), "make_solid", {"detail_mm": 0.0})
+    assert "0.2 mm detail" in note
+
+
+def _open_cylinder(radius=10.0, height=30.0) -> trimesh.Trimesh:
+    cyl = trimesh.creation.cylinder(radius=radius, height=height, sections=32)
+    mask = cyl.triangles_center[:, 2] < cyl.bounds[1][2] - 0.5
+    return trimesh.Trimesh(cyl.vertices, cyl.faces[mask], process=False)
+
+
+def test_extend_break_continues_an_open_rim():
+    """A broken part in a scan rarely has a flat break face; usually the
+    surface just stops at an open rim. Clicking next to the rim continues
+    the surface from it, leaving the far end open as the rim was."""
+    import numpy as np
+
+    m = _open_cylinder()
+    assert m.is_winding_consistent and not m.is_watertight
+    point = m.vertices[int(np.argmax(m.vertices[:, 2]))].tolist()
+    result, note = run_action(m, "extend_break", {"point": point, "length_mm": 8.0, "follow_curve": True, "taper": False})
+    assert note.startswith("Continued the open edge 8 mm")
+    assert result.extents[2] == pytest.approx(m.extents[2] + 8.0, abs=0.01)
+    assert result.extents[0] == pytest.approx(m.extents[0], abs=0.01)  # still a 20 mm tube
+    assert result.is_winding_consistent and not result.is_watertight
+    # The rim moved up 8 mm; it did not gain or lose any open edges.
+    before = (np.unique(m.edges_sorted, axis=0, return_counts=True)[1] == 1).sum()
+    after = (np.unique(result.edges_sorted, axis=0, return_counts=True)[1] == 1).sum()
+    assert before == after == 32
+    # Filling the moved rim gives a closed 38 mm tall cylinder.
+    closed, _ = run_action(result, "cleanup", {"fill": True, "close_open_edge": True, "reduce": False})
+    assert closed.is_watertight and closed.volume == pytest.approx(np.pi * 100 * 38, rel=0.03)
+
+
+def test_extend_break_on_a_flat_face_still_closes_the_model():
+    """The original job: a lug snapped off a closed solid, leaving a flat face."""
+    stub = trimesh.creation.box((10, 10, 20))
+    result, note = run_action(stub, "extend_break", {"point": [0, 0, 10], "length_mm": 5.0, "follow_curve": False, "taper": False})
+    assert note.startswith("Rebuilt the broken end 5 mm long")
+    assert result.is_watertight and result.extents[2] == pytest.approx(25.0)
+    assert result.volume == pytest.approx(10 * 10 * 25, rel=0.01)

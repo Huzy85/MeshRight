@@ -851,14 +851,16 @@ def make_solid(mesh: trimesh.Trimesh, detail_mm: float = 0.0) -> tuple[trimesh.T
     close up, hidden inner walls disappear, and the result is always
     watertight. Detail finer than the grid is softened, so the grid size is
     picked from the model: 0.2 mm (finer than a 0.4 mm nozzle) or coarser for
-    big models so memory stays reasonable.
+    big models so memory stays reasonable. A model under 30 mm gets at least
+    150 cells across whatever its size, so a scan saved in metres (a 0.15
+    "mm" bunny) is not reduced to a single voxel and refused.
     """
     from scipy import ndimage
 
     span = float(mesh.extents.max())
     if span <= 0:
         raise ValueError("The model has no size.")
-    pitch = max(detail_mm or 0.2, span / 300)
+    pitch = max(detail_mm, span / 300) if detail_mm else max(span / 300, min(0.2, span / 150))
 
     # Close every opening first, including a big open edge: otherwise there
     # is no inside to fill.
