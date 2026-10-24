@@ -103,14 +103,22 @@ def _fix(args: argparse.Namespace) -> int:
         print(f"Fixing {path.name} ...", flush=True)
         outputs.append(batch.process_file(path, path.name, options, printer if chosen else None))
     batch.unique_names([r for r, _ in outputs])
+    kept = []
     for result, data in outputs:
-        if data is not None:
-            (out / result.output_name).write_bytes(data)
+        if data is None:
+            continue
+        target = out / result.output_name
+        if target.exists() and not args.overwrite:
+            kept.append(target.name)
+            continue
+        target.write_bytes(data)
     report = batch.summary_text([r for r, _ in outputs])
     (out / "meshright-report.txt").write_text(report, encoding="utf-8")
     print()
     print(report)
     print(f"Saved in {out}")
+    if kept:
+        print(f"Not replaced (already there, use --overwrite to replace): {', '.join(kept)}", file=sys.stderr)
     return 0 if all(r.ready for r, _ in outputs) else 1
 
 
@@ -229,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     fix.add_argument("--best-bottom", action="store_true", help="turn each model to MeshRight's best guess of its bottom")
     fix.add_argument("--no-bed", action="store_true", help="do not centre the models on the bed")
     fix.add_argument("--no-fit", action="store_true", help="do not shrink models that are too big for your printer")
+    fix.add_argument("--overwrite", action="store_true", help="replace fixed files that are already in the output folder")
     fix.set_defaults(func=_fix)
 
     ask = sub.add_parser("ask", help="ask your own AI service about a model (it sees the report, not the model)")

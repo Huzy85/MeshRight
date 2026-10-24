@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass, field
 
@@ -17,6 +18,19 @@ _UNKNOWN = object()
 # step lands on the result of the last dropped step (the "base"), not on the
 # original, so undo never jumps over steps the user did not undo.
 MAX_UNDO_STEPS = 20
+
+# Every step keeps a full copy of the mesh, so twenty steps on a 100 MB scan
+# would hold 2 GB. Older steps are also dropped once the kept ones weigh more
+# than this, however few there are. The newest step is always kept.
+MAX_UNDO_BYTES = int(os.environ.get("MESHRIGHT_MAX_UNDO_MB", "1500")) * 1024 * 1024
+
+
+def mesh_bytes(mesh: trimesh.Trimesh) -> int:
+    """Memory held by a mesh's vertices and faces."""
+    try:
+        return int(mesh.vertices.nbytes) + int(mesh.faces.nbytes)
+    except Exception:
+        return 0
 
 
 @dataclass
@@ -68,12 +82,28 @@ class Document:
         step = Step(action, dict(params or {}), receipt, mesh)
         del self.steps[self.position:]  # a new step replaces anything undone
         self.steps.append(step)
-        if len(self.steps) > MAX_UNDO_STEPS:
+        self._forget_oldest()
+        self.position = len(self.steps)
+        return step
+
+    def _forget_oldest(self) -> None:
+        """Drop the oldest steps while there are too many, or they hold too
+        much memory. Meshes shared between steps (and the original) are
+        counted once."""
+        while len(self.steps) > 1 and (len(self.steps) > MAX_UNDO_STEPS or self.undo_bytes() > MAX_UNDO_BYTES):
             oldest = self.steps.pop(0)
             self.base, self.base_crossing = oldest.mesh, oldest.crossing
             self.dropped += 1
-        self.position = len(self.steps)
-        return step
+
+    def undo_bytes(self) -> int:
+        """Memory held by the kept steps, beyond the original."""
+        seen = {id(self.original)}
+        total = 0
+        for step in self.steps:
+            if id(step.mesh) not in seen:
+                seen.add(id(step.mesh))
+                total += mesh_bytes(step.mesh)
+        return total
 
     def undo(self) -> None:
         if self.can_undo:
@@ -88,10 +118,7 @@ class Document:
         if self.mesh is not self.original:
             del self.steps[self.position:]
             self.steps.append(Step("revert", {}, "Back to the original file", self.original))
-            if len(self.steps) > MAX_UNDO_STEPS:
-                oldest = self.steps.pop(0)
-                self.base, self.base_crossing = oldest.mesh, oldest.crossing
-                self.dropped += 1
+            self._forget_oldest()
             self.position = len(self.steps)
 
     def crossing(self):

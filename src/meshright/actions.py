@@ -1083,6 +1083,7 @@ def make_mold_action(mesh, wall_mm, clearance_mm, smooth_fine_details, include_c
     except Exception as e:
         raise ActionError(f"Could not analyse part for mold making: {e}") from e
 
+    skipped: list[str] = []  # features that could not be cut, for the receipt
     try:
         parts = build(
             mesh, a,
@@ -1090,6 +1091,7 @@ def make_mold_action(mesh, wall_mm, clearance_mm, smooth_fine_details, include_c
             add_clamps=bool(include_clamps),
             clearance_mm=float(clearance_mm),
             wall_mm=float(wall_mm) if float(wall_mm) > 0 else None,
+            notes=skipped,
         )
     except MoldError as e:
         raise ActionError(str(e)) from e
@@ -1127,13 +1129,16 @@ def make_mold_action(mesh, wall_mm, clearance_mm, smooth_fine_details, include_c
     combined = trimesh.util.concatenate(combined_parts)
 
     piece_desc = "3-piece (top + two side pieces)" if is_three_part else "2-piece"
+    features = "alignment pins, pour hole and air vents" if not skipped else "some features left out (see below)"
     note_lines = [
-        f"Mold built: {piece_desc} mold with alignment pins, pour hole and air vents.",
+        f"Mold built: {piece_desc} mold with {features}.",
     ]
     if is_three_part:
         note_lines.append(
             "  This part has undercuts. The bottom is split into two side pieces that pull out sideways."
         )
+    for text in skipped:
+        note_lines.append(f"  Left out: {text}")
     for issue in a.issues:
         if issue.default_fix:
             note_lines.append(f"  Fixed automatically: {issue.message}")

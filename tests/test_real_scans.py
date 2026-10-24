@@ -1,7 +1,7 @@
 """Real-model integration tests.
 
 Two sources of models:
-  NAS — local STLs from /mnt/nas-vault; skipped when NAS is not mounted.
+  NAS — local STLs from the folder in MESHRIGHT_TEST_MODELS; skipped when unset.
   Web — trimesh test models downloaded once to tools/library-cache/; skipped
         when the network is unavailable (marked ``slow``).
 
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -30,7 +31,9 @@ from meshright.mold import analyse as mold_analyse, build as mold_build
 
 # ---------------------------------------------------------------- helpers
 
-NAS_DIR = Path("/mnt/nas-vault/3D Files/3D Printer/STLs")
+# A folder of real STL files to test against. Set MESHRIGHT_TEST_MODELS to
+# point at your own; these tests are skipped when it is unset or missing.
+NAS_DIR = Path(os.environ.get("MESHRIGHT_TEST_MODELS") or "/nonexistent")
 CACHE    = Path(__file__).parent.parent / "tools" / "library-cache"
 WEB_BASE = "https://raw.githubusercontent.com/mikedh/trimesh/main/models/"
 WEB_MODELS = {
@@ -55,8 +58,8 @@ NAS_MODELS = {
 
 
 def _nas(key: str) -> trimesh.Trimesh:
-    if not NAS_DIR.exists():
-        pytest.skip("NAS not mounted")
+    if not NAS_DIR.is_dir():
+        pytest.skip("MESHRIGHT_TEST_MODELS is not set or not a folder")
     path = NAS_DIR / NAS_MODELS[key]
     if not path.exists():
         pytest.skip(f"NAS model missing: {path.name}")

@@ -11,6 +11,7 @@ Parameter conventions (from actions.py):
 """
 from __future__ import annotations
 
+import os
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -27,7 +28,9 @@ import meshright.merge as _merge   # for PENDING store (multi-mesh tests)
 
 # ---------------------------------------------------------------- helpers
 
-NAS_DIR = Path("/mnt/nas-vault/3D Files/3D Printer/STLs")
+# A folder of real STL files to test against. Set MESHRIGHT_TEST_MODELS to
+# point at your own; these tests are skipped when it is unset or missing.
+NAS_DIR = Path(os.environ.get("MESHRIGHT_TEST_MODELS") or "/nonexistent")
 CACHE    = Path(__file__).parent.parent / "tools" / "library-cache"
 WEB_BASE = "https://raw.githubusercontent.com/mikedh/trimesh/main/models/"
 WEB_MODELS = {
@@ -55,8 +58,8 @@ NAS_MODELS = {
 
 
 def _nas(key: str) -> trimesh.Trimesh:
-    if not NAS_DIR.exists():
-        pytest.skip("NAS not mounted")
+    if not NAS_DIR.is_dir():
+        pytest.skip("MESHRIGHT_TEST_MODELS is not set or not a folder")
     path = NAS_DIR / NAS_MODELS[key]
     if not path.exists():
         pytest.skip(f"NAS model missing: {path.name}")
