@@ -377,16 +377,17 @@ main { flex: 1; display: flex; min-height: 0; }
 /* ------------------------------------------------------------ inspector panel */
 
 #panel {
-  width: 340px;
+  position: relative;
+  width: var(--panel-w, 360px);
   flex-shrink: 0;
   overflow-y: auto;
-  padding: 20px;
+  padding: 0 20px 20px;
   background: var(--surface-solid);
   border-left: 1px solid var(--separator);
 }
 
 #panel section { padding: 18px 0; border-top: 1px solid var(--separator); }
-#panel section:first-child { padding-top: 0; border-top: 0; }
+#panel-report section:first-child { padding-top: 0; border-top: 0; }
 
 #panel h2 {
   margin: 0 0 10px;
@@ -645,15 +646,6 @@ dialog .sub { margin: 0 0 16px; color: var(--secondary); }
 
 /* ------------------------------------------------------------ small screens */
 
-@media (max-width: 760px) {
-  main { flex-direction: column; }
-  #viewer { flex: none; height: 55vh; }
-  #panel { width: auto; border-left: 0; border-top: 1px solid var(--separator); overflow: visible; }
-  body { height: auto; min-height: 100%; }
-  .brand h1 { font-size: 16px; }
-  .toolbar { gap: 6px; }
-}
-
 /* ------------------------------------------------------------ help */
 
 .shortcuts { display: grid; grid-template-columns: max-content 1fr; gap: 5px 16px; margin: 16px 0 4px; align-items: center; font-size: 14px; }
@@ -729,3 +721,310 @@ kbd {
 .ai-steps label { display: flex; gap: 8px; align-items: flex-start; }
 .ai-steps small { display: block; color: var(--secondary); }
 .link-button { background: none; border: none; color: var(--secondary); text-decoration: underline; margin-right: auto; cursor: pointer; }
+
+/* ============================================================ 0.3.0 layout: rail, card, corners, modes */
+
+:root { --panel-w: 360px; --rail-w: 72px; }
+
+/* Nothing floats until a model is open. */
+body:not(.has-model) #rail,
+body:not(.has-model) #card,
+body:not(.has-model) .corner { display: none !important; }
+
+/* Mode switch in the header */
+.mode-switch { flex: none; }
+.mode-switch button { padding: 4px 12px; min-height: 26px; font-size: 13px; }
+
+/* ------------------------------------------------------------ tool rail (left) */
+
+#rail {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  width: var(--rail-w);
+  background: var(--surface);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  z-index: 4;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+#rail::-webkit-scrollbar { display: none; }
+.rail-btn {
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 2px 6px;
+  min-height: 52px;
+  width: 100%;
+  background: transparent;
+  border-radius: 11px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--secondary);
+  line-height: 1.1;
+  text-align: center;
+}
+.rail-btn svg { width: 20px; height: 20px; }
+.rail-btn:hover { background: var(--fill); color: var(--text); }
+.rail-btn.active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.rail-btn:disabled { opacity: 0.35; }
+body[data-mode="simple"] #rail [data-only="advanced"],
+body[data-mode="advanced"] #rail [data-only="simple"] { display: none; }
+
+/* ------------------------------------------------------------ guide card (bottom centre, Simple) */
+
+#card {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 2 * 372px));
+  min-width: 320px;
+  padding: 14px 16px 16px;
+  background: var(--surface);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  border-radius: 20px;
+  box-shadow: var(--shadow), 0 0 0 0.5px var(--separator);
+  z-index: 4;
+  animation: drop-in 0.25s ease;
+}
+body[data-mode="advanced"] #card { display: none !important; }
+.card-head { display: flex; align-items: center; gap: 14px; }
+.card-text { flex: 1; min-width: 0; }
+#card-verdict { margin: 0; font: 600 16px/1.25 var(--display); letter-spacing: -0.01em; text-wrap: balance; }
+#card-sub { margin: 2px 0 0; color: var(--secondary); font-size: 13px; }
+.ring {
+  --pct: 0;
+  --ring: var(--bad-ring);
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(closest-side, var(--surface-solid) 84%, transparent 85%),
+    conic-gradient(var(--ring) calc(var(--pct) * 1%), var(--fill) 0);
+}
+.ring span { font: 600 18px/1 var(--display); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.card-close svg { transition: transform 0.2s ease; }
+#card.collapsed .card-close svg { transform: rotate(180deg); }
+#card.collapsed #card-body { display: none; }
+#card.collapsed { padding-bottom: 12px; }
+#card-body { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#card-body .primary { padding: 8px 20px; min-height: 36px; font-size: 14px; }
+#card-body button:not(.primary) { background: var(--fill); border-radius: 980px; min-height: 36px; }
+#card-body .spacer { flex: 1; }
+#card-body .step {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--fill);
+  font-size: 13px;
+}
+#card-body .step strong { display: block; font-weight: 600; }
+#card-body .step small { color: var(--secondary); }
+#card-body .step .text { flex: 1; min-width: 0; }
+#card-body .step button { min-height: 30px; padding: 4px 12px; font-size: 13px; background: var(--surface-solid); }
+#card-body .step button.primary { background: var(--accent); color: var(--on-accent); }
+#card-body .fine { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--secondary); }
+
+/* ------------------------------------------------------------ corners */
+
+.corner { position: absolute; z-index: 4; display: flex; align-items: center; gap: 4px; }
+.corner.pill {
+  padding: 4px;
+  background: var(--surface);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-radius: 980px;
+  box-shadow: var(--shadow);
+}
+.corner.pill button { background: transparent; border-radius: 980px; font-size: 13px; }
+.corner.pill button:hover:not(:disabled) { background: var(--fill); }
+.corner.pill span { font-size: 12px; color: var(--secondary); padding: 0 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+#corner-bl { left: 12px; bottom: 16px; }
+#corner-br { right: 12px; bottom: 16px; }
+#corner-tr { right: 12px; top: 12px; flex-direction: column; align-items: flex-end; gap: 6px; }
+
+#view-cube { width: 96px; height: 96px; cursor: pointer; touch-action: none; }
+#view-cube canvas { display: block; width: 96px; height: 96px; }
+.corner-row { display: flex; gap: 4px; padding: 4px; background: var(--surface); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-radius: 980px; box-shadow: var(--shadow); }
+.corner-row button { background: transparent; border-radius: 980px; font-size: 13px; }
+.corner-row button:hover { background: var(--fill); }
+.corner-row button[aria-expanded="true"] { background: var(--fill-strong); }
+
+.popover {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  min-width: 190px;
+  background: var(--surface-solid);
+  border-radius: 14px;
+  box-shadow: var(--shadow), 0 0 0 1px var(--separator);
+}
+.popover.open { display: flex; }
+#view-controls { display: flex; flex-direction: column; gap: 2px; }
+#view-controls .toggle { border-radius: 9px; padding: 6px 10px; justify-content: flex-start; gap: 8px; }
+#view-controls .toggle::before { content: ""; width: 16px; height: 16px; border-radius: 5px; background: var(--fill-strong); flex: none; }
+#view-controls .toggle:has(input:checked) { background: transparent; color: var(--text); }
+#view-controls .toggle:has(input:checked)::before { background: var(--accent); box-shadow: inset 0 0 0 3px var(--surface-solid); }
+#view-controls #cut-height { width: calc(100% - 16px); margin: 4px 8px 6px; }
+#view-controls #reset-view { background: var(--fill); border-radius: 9px; margin-top: 4px; }
+
+/* Messages and tips keep clear of the rail and cube. */
+#status, #tip { max-width: min(480px, calc(100% - 240px)); }
+
+/* ------------------------------------------------------------ the panel: drawer in Simple, dock in Advanced */
+
+.panel-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 48px;
+  margin: 0 -20px 16px;
+  padding: 0 12px 0 20px;
+  background: var(--surface-solid);
+  border-bottom: 1px solid var(--separator);
+}
+.panel-bar strong { font-size: 13px; color: var(--secondary); font-weight: 600; }
+#panel-resize {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 3;
+}
+#panel-resize:hover, body.resizing #panel-resize { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing #viewer { pointer-events: none; }
+
+body[data-mode="simple"] #panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(400px, 100%);
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+  box-shadow: none;
+  z-index: 6;
+}
+body[data-mode="simple"].drawer-open #panel { transform: none; box-shadow: -8px 0 40px rgba(0, 0, 0, 0.12); }
+body[data-mode="simple"] #panel-resize { display: none; }
+body[data-mode="simple"] #sec-summary,
+body[data-mode="simple"] #sec-checklist { display: none; }
+body[data-mode="simple"] #panel-empty,
+body[data-mode="simple"] #panel-busy,
+body[data-mode="simple"] #panel-error { display: none !important; }
+body[data-mode="advanced"] #panel-close { display: none; }
+body[data-mode="advanced"] #rail .rail-btn[data-do="more"] { display: none; }
+main { position: relative; overflow: hidden; }
+
+/* Busy and error states in Simple mode show on the card instead */
+#card .busy-row { display: flex; align-items: center; gap: 10px; color: var(--secondary); }
+#card .busy-row .spinner { width: 18px; height: 18px; margin: 0; border-width: 2px; }
+
+/* ------------------------------------------------------------ help guide */
+
+#help-dialog { width: min(640px, calc(100% - 32px)); }
+#help-tabs { display: flex; margin: 10px 0 14px; }
+#help-search {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--fill);
+  color: var(--text);
+  margin-bottom: 10px;
+}
+#help-topics { display: flex; flex-direction: column; gap: 2px; max-height: 55vh; overflow-y: auto; }
+#help-topics h3 { margin: 12px 0 4px; font-size: 12px; font-weight: 600; color: var(--secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+#help-topics h3:first-child { margin-top: 0; }
+#help-topics details { border-radius: 10px; }
+#help-topics details[open] { background: var(--fill); }
+#help-topics summary { list-style: none; cursor: pointer; padding: 8px 10px; border-radius: 10px; font-weight: 500; display: flex; justify-content: space-between; align-items: center; }
+#help-topics summary::-webkit-details-marker { display: none; }
+#help-topics summary::after { content: "›"; color: var(--secondary); font-size: 16px; transition: transform 0.2s ease; }
+#help-topics details[open] summary::after { transform: rotate(90deg); }
+#help-topics summary:hover { background: var(--fill); }
+#help-topics .body { padding: 0 10px 10px; font-size: 13px; color: var(--text); }
+#help-topics .body p { margin: 0 0 8px; }
+#help-topics .body p:last-child { margin: 0; }
+#help-topics .body .where { color: var(--secondary); font-size: 12px; }
+#help-topics mark { background: color-mix(in srgb, var(--warn-ring) 35%, transparent); color: inherit; border-radius: 3px; }
+
+/* ------------------------------------------------------------ report dialog */
+
+#report-dialog { width: min(520px, calc(100% - 32px)); }
+#report-note { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; border: 1px solid var(--separator); border-radius: 8px; background: var(--surface-solid); color: var(--text); resize: vertical; }
+.report-heading { margin: 16px 0 4px; font-size: 13px; font-weight: 600; }
+.report-list { margin: 0; padding-left: 18px; font-size: 13px; color: var(--secondary); display: flex; flex-direction: column; gap: 2px; }
+.consent { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; padding: 10px 12px; border-radius: 12px; background: var(--fill); cursor: pointer; }
+.consent input { accent-color: var(--accent); width: 18px; height: 18px; margin: 1px 0 0; flex-shrink: 0; }
+.consent small { color: var(--secondary); }
+.privacy { margin: 14px 0 0; font-size: 12px; color: var(--secondary); line-height: 1.5; }
+.report-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+
+/* ------------------------------------------------------------ tablet and phone */
+
+@media (max-width: 1240px) {
+  #card { bottom: 68px; left: calc(var(--rail-w) + 24px); right: 24px; width: auto; min-width: 0; max-width: 640px; transform: none; }
+}
+
+@media (max-width: 1024px) {
+  :root { --rail-w: 76px; }
+  /* The dock already shows size and triangles; keep the two bottom pills apart. */
+  body[data-mode="advanced"] #corner-size, body[data-mode="advanced"] #corner-tris { display: none; }
+  .rail-btn { min-height: 56px; }
+  button, .button { min-height: 36px; }
+  button.icon { width: 40px; min-height: 36px; }
+  .corner.pill button { min-height: 36px; }
+  body[data-mode="advanced"] #panel { width: min(380px, 45%); }
+  #printer-open span, #ai-open span { display: none; }
+}
+
+@media (max-width: 760px) {
+  header { height: 48px; padding: 0 10px; gap: 6px; }
+  .brand h1 { display: none; }
+  .toolbar { gap: 4px; min-width: 0; flex: 1; justify-content: flex-end; }
+  #printer-open span, #ai-open span { display: none; }
+  #printer-open, #ai-open { padding: 0 8px; }
+  #doc-tabs { display: none !important; }
+  #rail { left: 8px; top: 8px; }
+  #card { left: 8px; right: 8px; width: auto; min-width: 0; max-width: none; bottom: 8px; transform: none; }
+  #corner-bl, #corner-br { display: none !important; }
+  #corner-tr { right: 8px; top: 8px; }
+  #view-cube, #view-cube canvas { width: 72px; height: 72px; }
+  body[data-mode="advanced"] main { flex-direction: column; }
+  body[data-mode="advanced"] #viewer { flex: none; height: 52vh; }
+  body[data-mode="advanced"] #panel { width: auto !important; flex: 1; border-left: 0; border-top: 1px solid var(--separator); }
+  body[data-mode="advanced"] #panel-resize { display: none; }
+  body[data-mode="simple"] #panel { width: 100%; }
+  #status, #tip { max-width: calc(100% - 100px); left: 8px; transform: none; }
+  @keyframes drop-in { from { opacity: 0; transform: translateY(-6px); } }
+}
+
+/* Advanced: T hides and shows the dock */
+body[data-mode="advanced"].panel-hidden #panel { display: none; }

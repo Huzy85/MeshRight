@@ -13,7 +13,7 @@
     } }
   </script>
 </head>
-<body>
+<body data-mode="simple">
   <header>
     <div class="brand">
       <img src="favicon.svg" alt="" width="22" height="22">
@@ -22,27 +22,23 @@
     <nav id="doc-tabs" aria-label="Open models" hidden></nav>
     <div class="toolbar">
       <a id="update-link" class="update-pill" href="#" target="_blank" rel="noopener noreferrer" hidden>Update available</a>
-      <button type="button" class="plain" id="printer-open" title="Your printer">
+      <button type="button" class="plain" id="printer-open" title="Tell MeshRight which printer you use, so it can check the model fits and suggest sizes">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16V4h12v12M2.5 16h15M7 7h6v4H7z"/></svg>
         <span id="printer-name">Choose printer</span>
       </button>
-      <button type="button" class="plain" id="ai-open" title="Ask an AI about this model (optional, uses your own AI service)">
+      <button type="button" class="plain" id="ai-open" title="Ask an AI about this model. Optional: uses an AI service you connect yourself. It sees the check report, never your model.">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5l1.6 4.4 4.4 1.6-4.4 1.6L10 14.5l-1.6-4.4L4 8.5l4.4-1.6zM15.5 13l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg>
         <span>Ask AI</span>
       </button>
-      <button type="button" class="icon" id="help-open" title="Help and shortcuts (?)" aria-label="Help">
+      <div class="segmented mode-switch" role="radiogroup" aria-label="Mode" id="mode-switch">
+        <button type="button" role="radio" aria-checked="true" data-mode="simple" title="Simple: one card tells you what to do next. Best for phone scans and first prints.">Simple</button>
+        <button type="button" role="radio" aria-checked="false" data-mode="advanced" title="Advanced: every tool and every number in a panel beside the model">Advanced</button>
+      </div>
+      <button type="button" class="icon" id="help-open" title="Help: a guide to every tool, and keyboard shortcuts (?)" aria-label="Help">
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 1 1 3.2 2.1c-.6.3-1 .8-1 1.4v.4M10 14.2v.1"/></svg>
       </button>
-      <div class="button-group">
-        <button type="button" class="icon" id="undo" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5 3.5 9l4 4M4 9h7.5a4.5 4.5 0 0 1 0 9H9"/></svg>
-        </button>
-        <button type="button" class="icon" id="redo" title="Redo (Ctrl+Y)" aria-label="Redo" disabled>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 5 4 4-4 4M16 9H8.5a4.5 4.5 0 0 0 0 9H11"/></svg>
-        </button>
-      </div>
       <details id="export-menu" class="menu">
-        <summary class="button">Export</summary>
+        <summary class="button" title="Save the model as a file for your slicer, or open it in the slicer straight away">Export</summary>
         <div class="menu-items" role="menu">
           <button type="button" role="menuitem" data-format="stl">STL<small>Works in every slicer</small></button>
           <button type="button" role="menuitem" data-format="3mf">3MF<small>Bambu Studio, PrusaSlicer, OrcaSlicer</small></button>
@@ -53,7 +49,7 @@
           <div id="slicer-items" hidden></div>
         </div>
       </details>
-      <label class="button primary" for="file-input">Open</label>
+      <label class="button primary" for="file-input" title="Open a 3D model from this computer (Ctrl+O)">Open</label>
       <input id="file-input" type="file" accept=".stl,.obj,.ply,.3mf,.glb,.gltf,.off,.amf,.usd,.usda,.usdc,.usdz,.fbx,.xyz,.asc,.pts,.e57,.las,.laz,.meshright" multiple hidden>
     </div>
   </header>
@@ -63,20 +59,134 @@
       <div id="drop-hint">
         <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 5 41 14.5v19L24 43 7 33.5v-19zM24 24v19M7 14.5 24 24l17-9.5"/></svg>
         <p class="drop-title">Drop a 3D model here</p>
-        <p>STL, 3MF, OBJ, PLY, GLB, glTF, OFF, AMF or USD (USDA, USDC, USDZ), or a point cloud (XYZ, ASC, PTS, E57, LAS, LAZ). It stays on this computer.</p>
-        <label class="button primary" for="file-input">Choose a file</label>
+        <p>MeshRight checks it, tells you what is wrong, and fixes it so it prints. It stays on this computer.</p>
+        <label class="button primary big" for="file-input">Choose a file</label>
+        <p class="formats">STL, 3MF, OBJ, PLY, GLB, glTF, OFF, AMF, USD or USDZ, or a scanner point cloud (XYZ, ASC, PTS, E57, LAS, LAZ).</p>
         <p class="batch-hint">Several files? Choose or drop them together to fix them all at once.</p>
         <div id="samples" hidden>
-          <p>No model to hand? Try a sample:</p>
+          <p>No model to hand? Try it on a sample:</p>
           <div class="sample-list"></div>
         </div>
       </div>
+
+      <!-- Left: the tool rail. Which buttons show depends on the mode. -->
+      <nav id="rail" aria-label="Tools">
+        <button type="button" class="rail-btn" data-do="fix" data-only="simple" title="Fix the problems the check found: holes, loose bits, inside-out triangles. You see the plan before anything changes.">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13.5 3.5a3.5 3.5 0 0 0-4.6 4.4L3.5 13.3a1.4 1.4 0 0 0 2 2l5.4-5.4a3.5 3.5 0 0 0 4.4-4.6l-2 2-1.6-.4-.4-1.6z"/></svg>
+          <span>Fix</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="stand" data-only="simple" title="Stand the model the right way up for printing. Scans often come in lying on their side.">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v10M6.5 9.5 10 13l3.5-3.5M3 16.5h14"/></svg>
+          <span>Stand up</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="size" data-only="simple" title="See and change the size in millimetres. Change one side and the others follow.">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 14 14 3l3 3L6 17zM6 11l1.5 1.5M8.5 8.5 10 10M11 6l1.5 1.5"/></svg>
+          <span>Size</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="measure" title="Measure between two points you click. If you know the real distance, MeshRight can resize the model to match. (M)">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h14M3 7.5v5M17 7.5v5M7.5 8.5v3M12.5 8.5v3"/></svg>
+          <span>Measure</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="printer" data-only="simple" title="Choose your printer so MeshRight can check the model fits on its bed">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16V4h12v12M2.5 16h15M7 7h6v4H7z"/></svg>
+          <span>Printer</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="erase" data-only="advanced" title="Draw a loop around part of the model to erase it, for example the table a scanner picked up">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 13 7-7 4 4-5 5H6zM10 17h7"/></svg>
+          <span>Erase</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="piece" data-only="advanced" title="Click a loose piece to erase it, for example crumbs or a stand that is not joined to the model">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="9" r="5"/><circle cx="15.5" cy="14.5" r="2"/></svg>
+          <span>Piece</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="cut" data-only="advanced" title="Cut the model in two, with pins so the parts line up when glued. For models too tall for the printer.">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h14M6 4v4M14 12v4M10 2v16" stroke-dasharray="2 2"/></svg>
+          <span>Cut</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="hole" data-only="advanced" title="Make a round hole where you click, for a screw, a magnet or a hanging loop">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><circle cx="10" cy="10" r="2"/></svg>
+          <span>Hole</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="sculpt" data-only="advanced" title="Brush the surface: smooth bumps, flatten an area, push in or out">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16c3-1 4-3 4-6a3 3 0 0 1 3-3l5-4M9 8l3 3"/></svg>
+          <span>Sculpt</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="part" data-only="advanced" title="Turn an area of the surface into a separate part that fits it, such as a pad, grip or cover">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 12c3-6 11-6 14 0M3 12v3h14v-3"/></svg>
+          <span>Make a part</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="pick" data-only="advanced" title="Click three or more spots that should touch the bed. The model turns so they lie flat.">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 15h14M6 15l4-9 4 9M6 15h8"/></svg>
+          <span>Pick bottom</span>
+        </button>
+        <button type="button" class="rail-btn" data-do="more" title="Every tool and every number: position, size, edit tools, details and history">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M4 10h12M4 14h12"/></svg>
+          <span id="rail-more-text">More tools</span>
+        </button>
+      </nav>
+
+      <!-- Bottom centre, Simple mode: what to do next. -->
+      <section id="card" aria-live="polite" hidden>
+        <div class="card-head">
+          <div id="card-ring" class="ring"><span id="card-score">0</span></div>
+          <div class="card-text">
+            <p id="card-verdict"></p>
+            <p id="card-sub"></p>
+          </div>
+          <button type="button" class="icon card-close" id="card-collapse" title="Shrink the card so you can see more of the model" aria-label="Shrink the card">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 8 5 5 5-5"/></svg>
+          </button>
+        </div>
+        <div id="card-body"></div>
+      </section>
+
+      <!-- Top right: the view cube and view options. -->
+      <div id="corner-tr" class="corner">
+        <div id="view-cube" title="Drag the model to turn it. Click a face of this cube to look from that side, like a slicer's view cube.">
+          <canvas id="cube-canvas" width="192" height="192"></canvas>
+        </div>
+        <div class="corner-row">
+          <button type="button" id="view-home" title="Back to the starting view, with the whole model in sight (0 or F)">Home</button>
+          <button type="button" id="view-pop-open" aria-expanded="false" title="View options: colours, problem lines, wireframe, overhangs, rough spots, cut view">View</button>
+        </div>
+        <div id="view-pop" class="popover" role="group" aria-label="View options">
+          <div id="view-controls">
+            <label class="toggle" id="colour-toggle" hidden title="Show the colours the scanner recorded"><input type="checkbox" id="toggle-colour">Colours</label>
+            <label class="toggle" title="Draw the problems on the model: red for holes, orange for bad edges, purple where the surface cuts through itself (P)"><input type="checkbox" id="toggle-problems" checked>Problems</label>
+            <label class="toggle" title="See the triangles the model is made of (W)"><input type="checkbox" id="toggle-wireframe">Wireframe</label>
+            <label class="toggle" title="Colour the parts that lean out too far to print without support (O)"><input type="checkbox" id="toggle-overhang">Overhangs</label>
+            <label class="toggle" title="Green where the surface is clean, red where it is rough (Q)"><input type="checkbox" id="toggle-rough">Rough spots</label>
+            <label class="toggle" title="Slice the model open at a height you choose, to see inside (C)"><input type="checkbox" id="toggle-cut">Cut view</label>
+            <input type="range" id="cut-height" min="0" max="1000" value="500" aria-label="Cut height" title="Where to cut: slide to move the cut up or down" hidden>
+            <button type="button" id="reset-view" title="Fit the whole model in view (F)">Fit to view</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom left: undo, redo, history. -->
+      <div id="corner-bl" class="corner pill">
+        <button type="button" class="icon" id="undo" title="Undo the last change (Ctrl+Z)" aria-label="Undo" disabled>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5 3.5 9l4 4M4 9h7.5a4.5 4.5 0 0 1 0 9H9"/></svg>
+        </button>
+        <button type="button" class="icon" id="redo" title="Redo the change you undid (Ctrl+Y)" aria-label="Redo" disabled>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 5 4 4-4 4M16 9H8.5a4.5 4.5 0 0 0 0 9H11"/></svg>
+        </button>
+        <button type="button" id="history-open" title="Every change so far, newest at the bottom. Go back to the original file from here."><span id="history-count">History</span></button>
+      </div>
+
+      <!-- Bottom right: size, triangles, report. -->
+      <div id="corner-br" class="corner pill">
+        <span id="corner-size" title="Width × depth × height in millimetres"></span>
+        <span id="corner-tris" title="How many triangles make up the model. More triangles means more detail and slower slicing."></span>
+        <button type="button" id="report-open" title="Something went wrong? Send us what happened. You choose whether your model goes with it.">Report a problem</button>
+      </div>
+
       <div id="status" role="status" hidden></div>
       <div id="tip" role="note" hidden><span id="tip-text"></span><button type="button" id="tip-close">Got it</button></div>
       <canvas id="lasso-layer" hidden></canvas>
       <div id="erase-bar" class="pill-bar top" hidden>
         <span id="erase-text">Draw a loop around what you want to erase</span>
-        <label class="toggle"><input type="checkbox" id="erase-facing" checked>Facing me only</label>
+        <label class="toggle" title="Only erase the side facing you, so the far side of the model is left alone"><input type="checkbox" id="erase-facing" checked>Facing me only</label>
         <button type="button" id="erase-again" hidden>Draw again</button>
         <button type="button" class="primary danger" id="erase-do" hidden>Erase</button>
         <button type="button" id="erase-cancel">Cancel</button>
@@ -94,7 +204,7 @@
           <button type="button" role="radio" aria-checked="false" data-combine-mode="rotate" title="Drag the rings to turn it (R)">Turn</button>
           <button type="button" role="radio" aria-checked="false" data-combine-mode="scale" title="Drag the handles to resize it (S)">Resize</button>
         </div>
-        <select id="combine-how" aria-label="How to combine">
+        <select id="combine-how" aria-label="How to combine" title="Join adds it on. Cut it away removes its shape from your model. Keep the overlap keeps only where they cross.">
           <option value="join">Join them</option>
           <option value="subtract">Cut it away</option>
           <option value="overlap">Keep the overlap</option>
@@ -109,8 +219,8 @@
           <button type="button" role="radio" aria-checked="false" data-brush="push_out" title="Raise the surface">Push out</button>
           <button type="button" role="radio" aria-checked="false" data-brush="push_in" title="Lower the surface">Push in</button>
         </div>
-        <label class="inline-field">Size <input type="range" id="sculpt-size" min="0" max="100" value="45" aria-label="Brush size"></label>
-        <select id="sculpt-strength" aria-label="Strength">
+        <label class="inline-field" title="How wide the brush is. [ and ] also change it.">Size <input type="range" id="sculpt-size" min="0" max="100" value="45" aria-label="Brush size"></label>
+        <select id="sculpt-strength" aria-label="Strength" title="How much each stroke changes the surface">
           <option value="light">Light</option>
           <option value="medium" selected>Medium</option>
           <option value="strong">Strong</option>
@@ -123,8 +233,8 @@
           <button type="button" role="radio" aria-checked="false" data-cut-axis="x" title="Cut left from right">Left–right</button>
           <button type="button" role="radio" aria-checked="false" data-cut-axis="y" title="Cut front from back">Front–back</button>
         </div>
-        <input type="range" id="cutter-position" min="1" max="999" value="500" aria-label="Where to cut">
-        <label class="toggle"><input type="checkbox" id="cutter-pins" checked>Pins</label>
+        <input type="range" id="cutter-position" min="1" max="999" value="500" aria-label="Where to cut" title="Slide to move the cut line">
+        <label class="toggle" title="Add pins and matching holes so the two parts line up when you glue them"><input type="checkbox" id="cutter-pins" checked>Pins</label>
         <label class="toggle" title="Engrave each part's number on a hidden cut face, in assembly order"><input type="checkbox" id="cutter-numbers" checked>Numbers</label>
         <label class="inline-field" title="Play between each pin and its hole. 0.3 mm suits most printers: more if the parts will not push together, less if they wobble. Remembered with your printer.">Fit <input type="number" id="cutter-clearance" class="mini" min="0.1" max="0.6" step="0.05" value="0.3" aria-label="Pin clearance in mm"> mm</label>
         <button type="button" class="primary" id="cutter-do">Cut</button>
@@ -132,14 +242,14 @@
       </div>
       <div id="measure-bar" class="pill-bar top" hidden>
         <span id="measure-text">Click two points on the model</span>
-        <label class="inline-field" id="measure-set" hidden>Should be <input id="measure-target" type="number" min="0.01" step="any"> mm</label>
+        <label class="inline-field" id="measure-set" title="Type the real distance between the two points and MeshRight resizes the whole model to match" hidden>Should be <input id="measure-target" type="number" min="0.01" step="any"> mm</label>
         <button type="button" class="primary" id="measure-apply" hidden>Resize</button>
         <button type="button" id="measure-cancel">Done</button>
       </div>
       <div id="hole-bar" class="pill-bar top" hidden>
         <span id="hole-text">Click where the hole should go</span>
-        <label class="inline-field">Width <input id="hole-diameter" type="number" min="0.5" step="0.1" value="3.2"> mm</label>
-        <label class="inline-field">Depth <input id="hole-depth" type="number" min="0" step="0.5" value="0"> mm</label>
+        <label class="inline-field" title="How wide the hole is. 3.2 mm suits an M3 screw.">Width <input id="hole-diameter" type="number" min="0.5" step="0.1" value="3.2"> mm</label>
+        <label class="inline-field" title="How deep. 0 goes all the way through.">Depth <input id="hole-depth" type="number" min="0" step="0.5" value="0"> mm</label>
         <button type="button" class="primary" id="hole-do" disabled>Make hole</button>
         <button type="button" id="hole-cancel">Cancel</button>
       </div>
@@ -155,19 +265,18 @@
       </div>
       <p id="display-note" hidden></p>
       <div id="measure-label" hidden></div>
-      <div id="view-controls" class="pill-bar" hidden>
-        <label class="toggle" id="colour-toggle" hidden><input type="checkbox" id="toggle-colour">Colours</label>
-        <label class="toggle"><input type="checkbox" id="toggle-problems" checked>Problems</label>
-        <label class="toggle"><input type="checkbox" id="toggle-wireframe">Wireframe</label>
-        <label class="toggle"><input type="checkbox" id="toggle-overhang">Overhangs</label>
-        <label class="toggle" title="Green where the surface is clean, red where it is rough (Q)"><input type="checkbox" id="toggle-rough">Rough spots</label>
-        <label class="toggle"><input type="checkbox" id="toggle-cut">Cut view</label>
-        <input type="range" id="cut-height" min="0" max="1000" value="500" aria-label="Cut height" hidden>
-        <button type="button" id="reset-view">Reset view</button>
-      </div>
     </section>
 
-    <aside id="panel">
+    <!-- Simple mode: a drawer that slides in. Advanced mode: docked beside the model. -->
+    <aside id="panel" aria-label="Tools and details">
+      <div id="panel-resize" title="Drag to make the panel wider or narrower"></div>
+      <div class="panel-bar">
+        <strong id="panel-title">Tools and details</strong>
+        <button type="button" class="icon" id="panel-close" title="Close the panel" aria-label="Close">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+        </button>
+      </div>
+
       <div id="panel-empty" class="placeholder">
         <p>Open a model to see how ready it is to print, what is wrong, and where.</p>
       </div>
@@ -184,7 +293,7 @@
       </div>
 
       <div id="panel-report" hidden>
-        <section class="summary">
+        <section class="summary" id="sec-summary">
           <div id="score-ring"><span id="score-value">0</span></div>
           <div>
             <p id="verdict"></p>
@@ -192,28 +301,28 @@
           </div>
         </section>
 
-        <section>
+        <section id="sec-checklist">
           <h2>Get it ready to print</h2>
           <ol id="checklist"></ol>
         </section>
 
-        <section>
+        <section id="sec-problems">
           <h2>Problems</h2>
           <ul id="issues"></ul>
         </section>
 
-        <section>
+        <section id="sec-size">
           <h2>Size</h2>
           <form id="size-form" class="fields" autocomplete="off">
-            <label class="field"><span>Width</span><input id="size-x" data-axis="x" type="number" min="0.001" step="any" inputmode="decimal"><em>mm</em></label>
-            <label class="field"><span>Depth</span><input id="size-y" data-axis="y" type="number" min="0.001" step="any" inputmode="decimal"><em>mm</em></label>
-            <label class="field"><span>Height</span><input id="size-z" data-axis="z" type="number" min="0.001" step="any" inputmode="decimal"><em>mm</em></label>
+            <label class="field" title="Left to right"><span>Width</span><input id="size-x" data-axis="x" type="number" min="0.001" step="any" inputmode="decimal"><em>mm</em></label>
+            <label class="field" title="Front to back"><span>Depth</span><input id="size-y" data-axis="y" type="number" min="0.001" step="any" inputmode="decimal"><em>mm</em></label>
+            <label class="field" title="Bottom to top"><span>Height</span><input id="size-z" data-axis="z" type="number" min="0.001" step="any" inputmode="decimal"><em>mm</em></label>
           </form>
           <p class="hint">Change one size and the others follow, so the shape stays the same.</p>
           <label class="toggle-line"><input type="checkbox" id="toggle-coin">Show a coin next to it for scale (23 mm, like a 1 € or 25 ¢ coin)</label>
         </section>
 
-        <section>
+        <section id="sec-position">
           <h2>Position</h2>
           <div class="row">
             <div class="segmented" role="radiogroup" aria-label="Turn direction">
@@ -231,42 +340,42 @@
             </div>
           </div>
           <div class="row">
-            <button type="button" class="soft" data-action="place_on_bed">Put on bed</button>
-            <button type="button" class="soft" data-action="mirror" data-axis="x">Mirror</button>
+            <button type="button" class="soft" data-action="place_on_bed" title="Set the model flat on the bed and in the middle, the way it will print">Put on bed</button>
+            <button type="button" class="soft" data-action="mirror" data-axis="x" title="Flip it left to right, for example to make a left hand from a right one">Mirror</button>
           </div>
           <div class="row">
-            <button type="button" class="soft" id="up-open">Which way is up?</button>
-            <button type="button" class="soft" id="pick-start">Pick the bottom</button>
+            <button type="button" class="soft" id="up-open" title="Shows the model from several likely bottoms. Pick the one that looks upright.">Which way is up?</button>
+            <button type="button" class="soft" id="pick-start" title="Click three or more spots that should touch the bed. The model turns so they lie flat.">Pick the bottom</button>
           </div>
           <div class="row">
-            <button type="button" class="soft" id="best-open">Best way to print…</button>
+            <button type="button" class="soft" id="best-open" title="Tries many positions and ranks them by how much support they need and how steadily they stand">Best way to print…</button>
           </div>
         </section>
 
-        <section>
+        <section id="sec-edit">
           <h2>Edit</h2>
           <div class="row">
-            <button type="button" class="soft" id="erase-start">Erase an area</button>
-            <button type="button" class="soft" id="piece-start">Erase a piece</button>
+            <button type="button" class="soft" id="erase-start" title="Draw a loop around part of the model to erase it">Erase an area</button>
+            <button type="button" class="soft" id="piece-start" title="Click a loose piece to erase it">Erase a piece</button>
           </div>
           <div class="row">
-            <button type="button" class="soft" id="thick-open">Give it thickness</button>
-            <button type="button" class="soft" id="solid-open">Make Solid</button>
+            <button type="button" class="soft" id="thick-open" title="For flat scans with no inside, like a face mask: adds a back so it becomes a solid">Give it thickness</button>
+            <button type="button" class="soft" id="solid-open" title="Rebuilds the whole model as one sealed solid. Use it when Clean up cannot close every hole.">Make Solid</button>
           </div>
           <div class="row">
-            <button type="button" class="soft" id="cut-start">Cut in two</button>
-            <button type="button" class="soft" id="hole-start">Add a hole</button>
+            <button type="button" class="soft" id="cut-start" title="Cut the model in two, with pins so the parts line up when glued">Cut in two</button>
+            <button type="button" class="soft" id="hole-start" title="Make a round hole where you click">Add a hole</button>
           </div>
           <div class="row">
-            <button type="button" class="soft" id="measure-start">Measure</button>
-            <button type="button" class="soft" id="walls-check">Check walls</button>
+            <button type="button" class="soft" id="measure-start" title="Measure between two points, and resize the model to a known distance">Measure</button>
+            <button type="button" class="soft" id="walls-check" title="Shows walls thinner than your nozzle can print in red">Check walls</button>
           </div>
           <div class="row">
-            <button type="button" class="soft" id="hollow-open">Hollow (resin)</button>
-            <button type="button" class="soft" id="bust-open">Make a bust</button>
+            <button type="button" class="soft" id="hollow-open" title="For resin printers: hollows the inside to save resin and adds drain holes">Hollow (resin)</button>
+            <button type="button" class="soft" id="bust-open" title="Cuts a scanned head or figure at the neck or chest and adds a flat base">Make a bust</button>
           </div>
           <div class="row">
-            <button type="button" class="soft" id="sculpt-start">Sculpt</button>
+            <button type="button" class="soft" id="sculpt-start" title="Brush the surface: smooth, flatten, push in or out">Sculpt</button>
             <button type="button" class="soft" id="part-start" title="Turn an area of the surface into a piece that fits it">Make a part</button>
           </div>
           <div class="row">
@@ -278,7 +387,7 @@
           <p class="hint">Erase things you do not want, such as the table a scanner picked up. Give open surfaces like face scans a printable thickness. Combine adds a stand or handle, or cuts a shape out. Merge scans taken from different sides.</p>
         </section>
 
-        <details class="disclosure">
+        <details class="disclosure" id="details-disclosure">
           <summary>Details</summary>
           <dl id="stats"></dl>
           <div class="legend">
@@ -289,11 +398,11 @@
           </div>
         </details>
 
-        <details class="disclosure">
+        <details class="disclosure" id="history-disclosure">
           <summary>History</summary>
           <ol id="history"></ol>
           <label class="toggle-line"><input type="checkbox" id="toggle-changes">Show what changed since the original (green: untouched, red: moved 2 mm or more)</label>
-          <button type="button" class="soft" id="revert" disabled>Back to the original file</button>
+          <button type="button" class="soft" id="revert" title="Go back to the file exactly as you opened it. This can be undone too." disabled>Back to the original file</button>
         </details>
       </div>
     </aside>
@@ -302,35 +411,102 @@
   <dialog id="help-dialog" aria-labelledby="help-title">
     <form method="dialog">
       <h2 id="help-title">Help</h2>
-      <p class="sub">Keyboard shortcuts. The view keys match Meshmixer where they can.</p>
-      <dl class="shortcuts">
-        <dt><kbd data-mod>Ctrl</kbd><kbd>O</kbd></dt><dd>Open a file</dd>
-        <dt><kbd data-mod>Ctrl</kbd><kbd>E</kbd></dt><dd>Export</dd>
-        <dt><kbd data-mod>Ctrl</kbd><kbd>S</kbd></dt><dd>Save as a MeshRight project</dd>
-        <dt><kbd data-mod>Ctrl</kbd><kbd>Z</kbd></dt><dd>Undo</dd>
-        <dt><kbd data-mod>Ctrl</kbd><kbd>Y</kbd></dt><dd>Redo</dd>
-        <dt><kbd>F</kbd></dt><dd>Fit the model in view</dd>
-        <dt><kbd>W</kbd></dt><dd>Wireframe on or off</dd>
-        <dt><kbd>P</kbd></dt><dd>Show problems on or off</dd>
-        <dt><kbd>O</kbd></dt><dd>Overhangs on or off</dd>
-        <dt><kbd>Q</kbd></dt><dd>Rough spots on or off</dd>
-        <dt><kbd>C</kbd></dt><dd>Cut view on or off</dd>
-        <dt><kbd>M</kbd></dt><dd>Measure</dd>
-        <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Smaller or bigger brush (when sculpting)</dd>
-        <dt><kbd>G</kbd> <kbd>R</kbd> <kbd>S</kbd></dt><dd>Move, turn or resize (when combining models)</dd>
-        <dt><kbd>Esc</kbd></dt><dd>Stop the current tool</dd>
-        <dt><kbd>?</kbd></dt><dd>This list</dd>
-      </dl>
-      <p class="hint">Mouse: drag to turn the view, right-drag or two-finger drag to pan, scroll to zoom.</p>
-      <p class="hint"><strong>Ask AI</strong> (optional): connect an AI service you use, or one on this computer such as Ollama, and ask about your model. It is sent the check report and your question, never the model, and nothing changes until you press Apply.</p>
-      <div class="about">
-        <p><strong>MeshRight <span id="app-version"></span></strong> <span id="update-text"></span></p>
-        <label class="toggle-line"><input type="checkbox" id="update-auto" checked>Tell me when a new version is out</label>
-        <p class="hint">This only asks GitHub for the latest version number, once a day. Your models never leave this computer.</p>
-        <button type="button" class="soft" id="update-check">Check now</button>
+      <div class="segmented" role="tablist" id="help-tabs">
+        <button type="button" role="tab" aria-selected="true" data-tab="guide">Guide</button>
+        <button type="button" role="tab" aria-selected="false" data-tab="keys">Shortcuts</button>
+        <button type="button" role="tab" aria-selected="false" data-tab="about">About</button>
       </div>
+
+      <div id="help-guide" class="help-tab">
+        <input type="search" id="help-search" placeholder="Search the guide, for example “holes” or “too big”" aria-label="Search the guide" autocomplete="off">
+        <div id="help-topics"></div>
+        <p class="hint" id="help-none" hidden>Nothing matches. Try another word, or press Report a problem to ask us.</p>
+      </div>
+
+      <div id="help-keys" class="help-tab" hidden>
+        <p class="sub">The number keys match PrusaSlicer, OrcaSlicer and Bambu Studio.</p>
+        <dl class="shortcuts">
+          <dt><kbd>0</kbd></dt><dd>Home view</dd>
+          <dt><kbd>1</kbd> <kbd>2</kbd></dt><dd>Look from the top, from the bottom</dd>
+          <dt><kbd>3</kbd> <kbd>4</kbd></dt><dd>Look from the front, from the back</dd>
+          <dt><kbd>5</kbd> <kbd>6</kbd></dt><dd>Look from the left, from the right</dd>
+          <dt><kbd>F</kbd></dt><dd>Fit the model in view</dd>
+          <dt><kbd data-mod>Ctrl</kbd><kbd>O</kbd></dt><dd>Open a file</dd>
+          <dt><kbd data-mod>Ctrl</kbd><kbd>E</kbd></dt><dd>Export</dd>
+          <dt><kbd data-mod>Ctrl</kbd><kbd>S</kbd></dt><dd>Save as a MeshRight project</dd>
+          <dt><kbd data-mod>Ctrl</kbd><kbd>Z</kbd></dt><dd>Undo</dd>
+          <dt><kbd data-mod>Ctrl</kbd><kbd>Y</kbd></dt><dd>Redo</dd>
+          <dt><kbd>W</kbd></dt><dd>Wireframe on or off</dd>
+          <dt><kbd>P</kbd></dt><dd>Show problems on or off</dd>
+          <dt><kbd>O</kbd></dt><dd>Overhangs on or off</dd>
+          <dt><kbd>Q</kbd></dt><dd>Rough spots on or off</dd>
+          <dt><kbd>C</kbd></dt><dd>Cut view on or off</dd>
+          <dt><kbd>M</kbd></dt><dd>Measure</dd>
+          <dt><kbd>T</kbd></dt><dd>Open or close the tools panel</dd>
+          <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Smaller or bigger brush (when sculpting)</dd>
+          <dt><kbd>G</kbd> <kbd>R</kbd> <kbd>S</kbd></dt><dd>Move, turn or resize (when combining models)</dd>
+          <dt><kbd>Esc</kbd></dt><dd>Stop the current tool, or close the panel</dd>
+          <dt><kbd>?</kbd></dt><dd>This help</dd>
+        </dl>
+        <p class="hint">Mouse: drag to turn the view, right-drag or two-finger drag to pan, scroll to zoom. Touch: one finger turns, two fingers pan and zoom.</p>
+      </div>
+
+      <div id="help-about" class="help-tab" hidden>
+        <div class="about">
+          <p><strong>MeshRight <span id="app-version"></span></strong> <span id="update-text"></span></p>
+          <p class="hint">Free and open source. Your models never leave this computer unless you choose to send one with a problem report.</p>
+          <label class="toggle-line"><input type="checkbox" id="update-auto" checked>Tell me when a new version is out</label>
+          <p class="hint">This only asks GitHub for the latest version number, once a day.</p>
+          <button type="button" class="soft" id="update-check">Check now</button>
+          <p class="hint" style="margin-top:14px">Made by Steam Vibe Ltd, Holyhead, Wales. Problems and ideas: support@steamvibe.com or the Report a problem button.</p>
+        </div>
+      </div>
+
       <div class="dialog-actions">
         <button type="submit" value="close" class="primary">Done</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="report-dialog" aria-labelledby="report-title">
+    <form method="dialog" id="report-form">
+      <div id="report-ask">
+        <h2 id="report-title">Report a problem</h2>
+        <p class="sub">MeshRight puts together what we need to look into it. Nothing is sent until you press Send in your email app.</p>
+        <label class="stack" for="report-note">What happened? What did you expect? (optional)
+          <textarea id="report-note" rows="3" maxlength="2000" placeholder="For example: Clean up finished but the hole in the base is still there."></textarea>
+        </label>
+        <p class="report-heading">What goes in the report</p>
+        <ul class="report-list" id="report-includes">
+          <li>The last error messages MeshRight showed</li>
+          <li>The steps you took on this model (the History list)</li>
+          <li>MeshRight version, browser and operating system</li>
+          <li>The model's name, size and triangle count, not the model itself</li>
+        </ul>
+        <label class="consent"><input type="checkbox" id="report-model">
+          <span><strong>Also include my model file</strong> <span id="report-model-size"></span><br>
+          <small>Most faults can only be reproduced with the model. It is optional and off until you tick it.</small></span>
+        </label>
+        <p class="hint" id="report-big" hidden></p>
+        <p class="privacy">Steam Vibe Ltd is registered with the Information Commissioner's Office, ICO Reg. ZC095648. If you include your model, it is used only to reproduce the fault. It is never shared, distributed or sold, and it is deleted once the fault is fixed.</p>
+        <p class="error-line" id="report-error" hidden></p>
+        <div class="dialog-actions">
+          <button type="button" class="primary" id="report-send">Save report and open email</button>
+          <button type="submit" value="cancel" formnovalidate>Cancel</button>
+        </div>
+      </div>
+      <div id="report-done" hidden>
+        <h2>Nearly there</h2>
+        <p class="sub">The report was saved to your Downloads folder as <strong id="report-file"></strong>.</p>
+        <ol class="report-steps">
+          <li>An email to <strong>support@steamvibe.com</strong> should have opened. If it did not, write one yourself to that address.</li>
+          <li>Attach the report file from your Downloads folder.</li>
+          <li>Press Send.</li>
+        </ol>
+        <p class="hint">We read every report and reply to the address you send it from.</p>
+        <div class="dialog-actions">
+          <button type="submit" value="close" class="primary">Done</button>
+        </div>
       </div>
     </form>
   </dialog>
@@ -340,7 +516,7 @@
       <h2 id="cleanup-title">Clean up</h2>
       <div class="segmented" role="radiogroup" aria-label="Aim for" id="cleanup-preset">
         <button type="button" role="radio" aria-checked="false" data-preset="quick" title="Fewest triangles: slices fastest, fine for most prints">Quick print</button>
-        <button type="button" role="radio" aria-checked="true" data-preset="balanced" title="Trims only very heavy scans">Balanced</button>
+        <button type="button" role="radio" aria-checked="true" data-preset="balanced" title="Keeps the detail: only thins out very heavy scans">Balanced</button>
         <button type="button" role="radio" aria-checked="false" data-preset="detail" title="Keeps every triangle, for fine resin prints">Keep all detail</button>
         <button type="button" role="radio" aria-checked="false" data-preset="flexible" title="For TPU and other flexible filament: Check walls then asks for sturdier walls">Flexible</button>
       </div>
@@ -368,7 +544,7 @@
         <label class="field"><span>Bed width</span><input id="bed-x" type="number" min="10" max="5000" step="any" required><em>mm</em></label>
         <label class="field"><span>Bed depth</span><input id="bed-y" type="number" min="10" max="5000" step="any" required><em>mm</em></label>
         <label class="field"><span>Max height</span><input id="bed-z" type="number" min="10" max="5000" step="any" required><em>mm</em></label>
-        <label class="field"><span>Nozzle</span><input id="nozzle" type="number" min="0.05" max="3" step="any" required><em>mm</em></label>
+        <label class="field" title="The width of the hole the plastic comes out of. 0.4 mm on most printers."><span>Nozzle</span><input id="nozzle" type="number" min="0.05" max="3" step="any" required><em>mm</em></label>
       </div>
       <label class="stack" for="material">Material
         <select id="material"></select>
@@ -591,6 +767,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js"></script>
+  <script type="module" src="ui.js"></script>
 </body>
 </html>
