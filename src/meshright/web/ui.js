@@ -131,6 +131,13 @@ $('rail').addEventListener('click', (e) => {
 
 // Which rail button each tool bar belongs to, so the rail shows which tool is on.
 const BAR_TOOL = { 'measure-bar': 'measure', 'piece-bar': 'piece', 'cutter-bar': 'cut', 'hole-bar': 'hole', 'sculpt-bar': 'sculpt', 'pick-bar': 'pick' };
+// Keep --bar-h equal to the open tool bar's height, so the status line and tip never sit on top of it.
+const barSizer = new ResizeObserver(() => {
+  const bar = document.querySelector('.pill-bar.top:not([hidden])');
+  $('viewer').style.setProperty('--bar-h', bar ? `${bar.offsetHeight}px` : '52px');
+});
+for (const bar of document.querySelectorAll('.pill-bar.top')) barSizer.observe(bar);
+
 function updateRail() {
   const more = document.querySelector('#rail [data-do="more"]');
   more.classList.toggle('active', document.body.classList.contains('drawer-open'));
@@ -727,6 +734,79 @@ $('help-tabs').addEventListener('click', (e) => {
   const b = e.target.closest('[data-tab]');
   if (b) showHelpTab(b.dataset.tab);
 });
+
+// ---------------------------------------------------------------- plain-English tooltips
+// Controls that had no title get one here, keyed by selector, so the markup stays readable.
+const TIPS = {
+  '#erase-do': 'Remove the red area from the model. Undo brings it back.',
+  '#erase-again': 'Throw away this loop and draw a new one',
+  '#merge-undo': 'Take back the last pair of points you clicked',
+  '#merge-do': 'Line the two scans up on the points you clicked and join them into one model',
+  '#combine-do': 'Join the open models into one file, side by side',
+  '#cutter-do': 'Cut along the line shown. Each part becomes its own model, with pins if ticked.',
+  '#measure-apply': 'Resize the whole model so these two points are the distance you typed',
+  '#hole-do': 'Drill the hole where the ring is, with the width and depth set here',
+  '#pick-undo': 'Take back the last point you clicked',
+  '#pick-done': 'Turn the model so the points you picked lie flat on the bed',
+  '#sculpt-done': 'Finish sculpting. Every stroke is already in History and can be undone.',
+  '#tip-close': 'Hide this tip',
+  '#error-retry': 'Pick a different file to open',
+  '#toggle-coin': 'Show a 1p coin next to the model, so you can judge the size at a glance',
+  '#toggle-changes': 'Colour the triangles each step changed, so you can see exactly what a fix did',
+  '#update-auto': 'Once a day, ask GitHub for the newest version number. Nothing else is sent.',
+  '#update-check': 'Ask GitHub now whether a newer MeshRight is out',
+  '#report-model': 'Off by default. Tick it only if you are happy for us to open your file to find the fault.',
+  '#report-send': 'Saves a zip to your Downloads folder and opens an email to support@steamvibe.com with the details filled in',
+  '#cleanup-apply': 'Run the plan above. The result goes in History, so Undo brings the old model back.',
+  '#make-solid': 'Rebuilds the whole surface as one closed shell. Use it when Clean up cannot patch the holes.',
+  '#printer-preset': 'Pick your printer to fill in the bed size. Choose Custom to type your own.',
+  '#bed-x': 'How wide the printable area is, left to right, in millimetres',
+  '#bed-y': 'How deep the printable area is, front to back, in millimetres',
+  '#bed-z': 'How tall a print can be, in millimetres',
+  '#material': 'What you print with. It sets how thin a wall can be before it fails.',
+  '#batch-fit': 'Shrink any model that is too big for the printer bed',
+  '#batch-preset': 'How much detail to keep when cleaning each file',
+  '#batch-format': 'The file type each fixed model is saved as',
+  '#batch-run': 'Fix every ticked file with these settings. Each one is checked and cleaned in turn.',
+  '#batch-download': 'Save all the fixed files as one zip',
+  '#bust-height': 'How tall the finished bust should be, in millimetres',
+  '#part-thickness': 'How thick the new part is, in millimetres',
+  '#part-gap': 'Space between the part and the model so they fit without forcing. 0.2 mm suits most printers.',
+  '#colours-count': 'How many colours to split the model into. Match it to the colours loaded in your printer.',
+  '#hollow-wall': 'How thick the shell is left, in millimetres. 2 mm suits most resin prints.',
+  '#hollow-drain': 'Add a small hole at the bottom so uncured resin can drain out',
+  '#thickness': 'How thick the surface becomes, in millimetres. 2 mm prints well on most printers.',
+  '#walls-scale': 'Make the whole model bigger until the thinnest wall is thick enough to print',
+  '#ai-settings-open': 'Choose which AI service answers, and where its key is kept',
+  '#ai-apply': 'Run the steps you ticked, in order. Each one goes in History.',
+  '#ai-ask': 'Send your question with the check report. The model itself is never sent.',
+  '#ai-provider': 'Which service answers. Local options run on this computer and send nothing out.',
+  '#ai-model': 'The exact model name the service expects, for example claude-sonnet-5-5',
+  '#ai-key': 'Your API key. It stays in this browser and is only sent to the service you chose.',
+  '#ai-base': 'The web address of the service. Leave it alone unless you run your own.',
+  '#ai-forget': 'Delete the saved key and settings from this browser',
+  '#ai-test': 'Send a tiny test question to check the key and address work',
+  '#ai-save': 'Keep these settings in this browser',
+  '#save-project': 'Saves everything, including History, so you can reopen it later and carry on',
+};
+const TIP_TEXT = {
+  'Draw again': '#erase-again', 'Keep it as it is': 'Leave the model exactly as it is and close this',
+  'Pick the bottom myself': 'Click three or more spots that should touch the bed, and MeshRight turns the model to match',
+  'Make bust': 'Cut the model at the chosen height and add the base you picked',
+  'Make part': 'Build the part to fit the blue area, with the thickness and gap set here',
+  'Hollow': 'Empty the inside, leaving a shell of the thickness set here. Saves resin.',
+  'Add thickness': 'Turn a thin surface into a solid of the thickness set here, so it can be printed',
+  'Scale up': TIPS['#walls-scale'],
+  'Round base': 'A round plinth under the bust', 'Square base': 'A square plinth under the bust', 'No base': 'Just the cut, no plinth',
+  'Fix files': TIPS['#batch-run'],
+  'Save': 'Keep this printer. Its bed size is used to check the model fits.',
+  'Export': 'Save the 3MF with the colours split out for your slicer',
+};
+for (const [sel, text] of Object.entries(TIPS)) { const el = document.querySelector(sel); if (el && !el.title) el.title = text; }
+for (const b of document.querySelectorAll('dialog button')) {
+  const t = TIP_TEXT[b.textContent.trim()];
+  if (t && !t.startsWith('#') && !b.title) b.title = t;
+}
 
 // ---------------------------------------------------------------- report a problem
 

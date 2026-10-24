@@ -260,6 +260,21 @@ function showStatus(message, kind = 'info') {
 
 const fmt = (n, digits = 1) => Number(n).toLocaleString(undefined, { maximumFractionDigits: digits });
 
+// Plain words for each quick fix the checker can offer, shown as a tooltip.
+function fixTip(fix) {
+  const tips = {
+    place_on_bed: 'Sets the model flat on the bed and in the middle, the way it will print. Harmless any time.',
+    cut_flat_bottom: 'Slices a thin layer off the bottom so it has a flat face to stand on',
+    add_flat_base: 'Adds a thin flat plate under the model so it stands up',
+    thicken: 'Gives a flat or paper-thin surface real thickness so it can be printed',
+    split_to_fit: 'Cuts it into parts that each fit the bed, with pins so they glue back together lined up',
+    decimate: 'Simplifies the mesh so slicers load it quickly. Fine detail is kept where it matters.',
+    cleanup: 'Shows a plan of the fixes first. Nothing changes until you press Clean up in the plan.',
+  };
+  if (fix.action === 'scale') return /^Saved in/.test(fix.label) ? 'The file was saved in other units, so it came in the wrong size. This scales it to what it should be.' : 'Scales the model down until it fits the bed';
+  return tips[fix.action] || '';
+}
+
 function renderIssues(issues) {
   const list = $('issues');
   list.replaceChildren();
@@ -287,6 +302,7 @@ function renderIssues(issues) {
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = fix.label;
+        button.title = fixTip(fix);
         button.addEventListener('click', () => runAction(fix.action, fix.params));
         fixes.append(button);
       }
@@ -389,6 +405,7 @@ function checklistRow(state, number, title, detail, button) {
     b.type = 'button';
     b.className = spec.primary ? 'primary' : '';
     b.textContent = spec.label;
+    if (spec.title) b.title = spec.title;
     b.addEventListener('click', spec.run);
     return b;
   });
@@ -413,7 +430,7 @@ function renderChecklist(state) {
   list.append(checklistRow(
     toFix.length ? (fixBlocked ? 'blocked' : 'todo') : 'done', 1, 'Fix problems',
     toFix.length ? `${toFix.length} thing${toFix.length === 1 ? '' : 's'} to fix` : 'No problems left',
-    { label: 'Clean up…', primary: fixBlocked, run: openCleanup },
+    { label: 'Clean up…', primary: fixBlocked, run: openCleanup, title: 'Shows a plan of the fixes first. Nothing changes until you press Clean up in the plan.' },
   ));
 
   // 2. Stand it up
@@ -423,19 +440,20 @@ function renderChecklist(state) {
     stand ? 'todo' : 'done', 2, 'Stand it up',
     stand ? stand.title : 'Sits steadily on the bed',
     standFixes.length
-      ? standFixes.map((fix) => ({ label: fix.label, run: () => runAction(fix.action, fix.params) }))
-      : { label: 'Which way is up?', run: openUp },
+      ? standFixes.map((fix) => ({ label: fix.label, run: () => runAction(fix.action, fix.params), title: fixTip(fix) }))
+      : { label: 'Which way is up?', run: openUp, title: 'Tell MeshRight which side should touch the bed' },
   ));
   if (!stand) list.lastChild.classList.add('keep-button');
 
   // 3. Fits your printer
   const tooBig = issues.get('too_big');
   if (!printerChosen) {
-    list.append(checklistRow('todo', 3, 'Fits your printer', 'Choose your printer to check', { label: 'Choose', run: openPrinter }));
+    list.append(checklistRow('todo', 3, 'Fits your printer', 'Choose your printer to check', { label: 'Choose', run: openPrinter, title: 'Pick your printer so MeshRight can check the model fits the bed' }));
   } else if (tooBig) {
     // Shrink it, or split it into parts that each fit (keeps the full size).
     const buttons = tooBig.fixes.map((fix, i) => ({
       label: fix.label, primary: i === 0, run: () => runAction(fix.action, fix.params),
+      title: fixTip(fix),
     }));
     list.append(checklistRow('blocked', 3, 'Fits your printer', `Too big for the ${printer.name}: shrink it, or split it into parts`, buttons));
   } else {
@@ -447,8 +465,8 @@ function renderChecklist(state) {
   list.append(checklistRow(ready ? 'ready' : '', 4, 'Export for your slicer',
     ready ? 'Ready to print. Save it and open it in your slicer.' : 'You can export at any time',
     preferredSlicer()
-      ? { label: `Open in ${preferredSlicer().name}`, primary: ready, run: () => sendToSlicer(preferredSlicer()) }
-      : { label: 'Export 3MF', primary: ready, run: () => exportAs('3mf') }));
+      ? { label: `Open in ${preferredSlicer().name}`, primary: ready, run: () => sendToSlicer(preferredSlicer()), title: 'Saves a 3MF and opens it in the slicer straight away' }
+      : { label: 'Export 3MF', primary: ready, run: () => exportAs('3mf'), title: 'Saves the model as a 3MF file for your slicer' }));
 }
 
 // ---------------------------------------------------------------- send to slicer
@@ -2026,6 +2044,7 @@ function startSculpt() {
   modelRoot.add(brushRing);
   $('sculpt-bar').hidden = false;
   $('status').hidden = true;
+  $('status').textContent = '';
 }
 
 function stopSculpt() {
@@ -2084,7 +2103,7 @@ window.addEventListener('pointerup', () => {
   change('action', {
     action: 'sculpt',
     params: { stroke: points, radius_mm: brushRadius(), brush: sculptBrush, strength: $('sculpt-strength').value },
-  }, null).then(() => {
+  }, (s) => s.history?.steps?.[s.history.position - 1]?.receipt || null).then(() => {
     if (strokeLine) { strokeLine.geometry.dispose(); strokeLine.parent?.remove(strokeLine); strokeLine = null; }
   });
 });
