@@ -35,6 +35,11 @@ def test_join(cylinder):
     assert receipt == "Joined peg.stl to the model"
 
 
+def test_join_wholly_inside_says_so(cylinder):
+    with pytest.raises(ActionError, match="completely inside"):
+        run_action(block(), "combine_models", {"scan": "peg", "placement": placed((0, 0, 10), scale=0.5)})
+
+
 def test_subtract_makes_a_hole(cylinder):
     mesh, receipt = run_action(block(), "combine_models", {"scan": "peg", "placement": placed((0, 0, 10)), "how": "subtract"})
     assert mesh.is_watertight

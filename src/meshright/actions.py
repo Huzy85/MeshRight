@@ -665,6 +665,7 @@ def smooth_scan(mesh, strength):
 
     iters = {"light": 5, "medium": 12, "heavy": 25}[strength]
     result = mesh.copy()
+    result.merge_vertices()  # split corners would tear apart when smoothed
     sm.filter_taubin(result, lamb=0.5, nu=0.53, iterations=iters)
     from . import repair
     moved = repair.describe_change(repair.surface_change(mesh, result))
@@ -751,6 +752,7 @@ def repair_wound(mesh, smooth_passes, max_hole_edges):
 
     # Light Taubin smooth to settle the jagged wound edges before filling
     working = mesh.copy()
+    working.merge_vertices()  # split corners would tear apart when smoothed
     if int(smooth_passes) > 0:
         import trimesh.smoothing as sm
         sm.filter_taubin(working, lamb=0.5, nu=0.53, iterations=int(smooth_passes))
@@ -829,7 +831,10 @@ def scan_to_print(mesh, target_triangles):
     from . import repair
 
     steps = []
-    result = mesh
+    # Weld split corners first: smoothing a mesh whose triangles do not share
+    # corners pulls each triangle apart and leaves gaps everywhere.
+    result = mesh.copy()
+    result.merge_vertices()
 
     # Step 1: remove scan table if one is detectable
     z_lo, z_hi = result.bounds[0][2], result.bounds[1][2]
@@ -1333,7 +1338,7 @@ def extend_break(mesh, point, length_mm, follow_curve, taper):
     [
         Param("wall_mm", "number", "How thick the outer shell should be, in mm. Thicker = stronger but uses more resin.", minimum=0.8, maximum=20, default=2.0),
         Param("drain_holes", "boolean", "Add holes at the bottom so liquid resin can drain out after printing.", default=True),
-        Param("hole_mm", "number", "How wide the drain holes are, in mm.", minimum=1, maximum=20, default=3.0),
+        Param("hole_mm", "number", "How wide the drain holes are, in mm.", minimum=1, maximum=30, default=3.0),
     ],
 )
 def hollow(mesh, wall_mm, drain_holes, hole_mm):

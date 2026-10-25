@@ -6,7 +6,7 @@ from meshright.actions import ActionError, run_action
 from meshright.analysis import analyze
 from meshright.document import Document
 from meshright.intersections import crossing_pairs
-from meshright.repair import plan_cleanup, self_intersecting_faces
+from meshright.repair import plan_cleanup, self_intersecting_faces, thicken
 
 
 def folded_sphere():
@@ -398,3 +398,15 @@ def test_zero_area_triangles_are_removed_without_opening_the_surface():
     out = _collapse_slivers(needle)
     assert out.is_watertight
     assert (out.area_faces > 1e-12).all()
+
+
+def test_thicken_rough_scan_does_not_cross_itself():
+    # A bumpy cap like a phone scan: raw vertex normals cross when offset.
+    sphere = trimesh.creation.icosphere(subdivisions=4, radius=20)
+    rng = np.random.default_rng(3)
+    sphere.vertices += sphere.vertex_normals * rng.uniform(-0.8, 0.8, (len(sphere.vertices), 1))
+    cap = sphere.submesh([np.nonzero(sphere.triangles_center[:, 2] > 8)[0]], append=True)
+    for outward in (False, True):
+        shell = thicken(cap, 3, outward=outward, gap_mm=0.2)
+        assert shell.is_watertight
+        assert len(self_intersecting_faces(shell)) == 0

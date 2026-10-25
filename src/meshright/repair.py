@@ -946,7 +946,7 @@ def thicken(mesh: trimesh.Trimesh, thickness_mm: float, outward: bool = False, g
         raise ValueError("This model is already closed, so it has no open surface to thicken.")
 
     n = len(mesh.vertices)
-    normals = mesh.vertex_normals
+    normals = _smoothed_normals(mesh)
     if outward:
         front = mesh.vertices + normals * gap_mm
         back = mesh.vertices + normals * (gap_mm + thickness_mm)
@@ -968,6 +968,23 @@ def thicken(mesh: trimesh.Trimesh, thickness_mm: float, outward: bool = False, g
     shell = trimesh.Trimesh(vertices, np.vstack([front_faces, back_faces, walls]), process=True)
     trimesh.repair.fix_normals(shell, multibody=True)
     return shell
+
+
+def _smoothed_normals(mesh: trimesh.Trimesh, rounds: int = 10) -> np.ndarray:
+    """Vertex normals averaged with their neighbours. On a rough scan the raw
+    normals point every which way, so surfaces offset along them cross each
+    other; averaged ones keep the offset surface clean."""
+    from scipy import sparse
+
+    edges = mesh.edges_unique
+    n = len(mesh.vertices)
+    adjacency = sparse.coo_matrix((np.ones(len(edges) * 2), (np.r_[edges[:, 0], edges[:, 1]], np.r_[edges[:, 1], edges[:, 0]])), shape=(n, n)).tocsr()
+    adjacency = adjacency + sparse.identity(n, format="csr")
+    normals = mesh.vertex_normals.copy()
+    for _ in range(rounds):
+        normals = adjacency @ normals
+        normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-12)
+    return normals
 
 
 # ---------------------------------------------------------------- hollowing
