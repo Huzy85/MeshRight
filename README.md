@@ -8,7 +8,7 @@ and downloaded models and want one simple tool instead of several. It runs on
 Windows, macOS and Linux, and opens in your web browser, but everything
 happens on your own computer.
 
-![A tilted scan standing on a table is cleaned up, stood upright and made ready to print in MeshRight](docs/demo.gif)
+![A scan of a figure on a table goes from a score of 59 to Ready to print, one button at a time, in MeshRight](docs/demo.gif)
 
 > **Status: early alpha.** Everything below works; expect rough edges.
 > Please report problems with an example file.
@@ -19,23 +19,32 @@ happens on your own computer.
    [Releases page](https://github.com/Huzy85/MeshRight/releases) and
    double-click it. MeshRight opens in your web browser.
 2. Drop a model or scan onto the page, or click a sample model.
-3. Read the score and the problems list, then work down the checklist on
-   the right. Press **?** at any time for help.
+3. Press the blue button on the card at the bottom. It always does the next
+   right thing: fix, stand it up, choose your printer, export. Press **?** at
+   any time for help.
 
 ## In three steps
 
 1. **Open** a scan or model. MeshRight checks it and gives it a score from 0
    to 100, with every problem explained in plain English and shown on the model.
-2. **Follow the checklist**: Fix problems, Stand it up, Fits your printer,
+2. **Follow the steps**: Fix problems, Stand it up, Fits your printer,
    Export for your slicer. Each step is one button, and every change can be
-   undone.
+   undone. You can also step through the problems one at a time and skip any
+   you want to keep.
 3. **Print**: export a file, or open it straight in your slicer.
 
 No settings to learn, no account, and your files never leave your computer.
 
-| Problems shown on the model | Clean up shows its plan first | Which way is up? |
+**Simple or Advanced.** A switch at the top picks how much you see, and it is
+remembered between visits. *Simple* shows one card with the score, one line
+on what is wrong and one button. *Advanced* shows every tool and number in a
+panel beside the model (drag it wider, or hide it with **T**), with the edit
+tools on the left rail. A view cube in the corner turns the model like a
+slicer does (keys 0 to 6 too).
+
+| Simple: one card, one button | Advanced: every step and problem | Clean up shows its plan first |
 |---|---|---|
-| ![The problems list beside a scan](docs/screenshot.png) | ![The Clean up plan](docs/screenshot-cleanup.png) | ![Pictures of possible bottoms](docs/screenshot-which-way-up.png) |
+| ![Simple mode with the score card under a scan](docs/screenshot-simple.png) | ![The steps and problems list beside a scan](docs/screenshot.png) | ![The Clean up plan](docs/screenshot-cleanup.png) |
 
 ## What it can do
 
@@ -65,6 +74,8 @@ No settings to learn, no account, and your files never leave your computer.
 - **Give it thickness** turns an open surface (a face scan, a mask) into a
   printable shell.
 - **Sculpt** brushes: smooth rough spots, flatten, push out or in.
+- A model saved in the wrong units (it opens a few millimetres across) is
+  offered "Saved in inches / centimetres / metres" before anything else.
 
 **Stand it up**
 - **Which way is up?** offers pictures of likely bottoms; or click the bottom
@@ -111,10 +122,39 @@ No settings to learn, no account, and your files never leave your computer.
   [Ask AI](#ask-ai).
 - Works with AI apps: `meshright mcp` offers the checks, Clean up and every
   action to Claude Desktop, Claude Code, Cursor and other MCP apps (see Use).
-- Sample models, first-time tips and keyboard shortcuts (press **?**).
+- Sample models, a searchable help guide of 45 topics, a tooltip on every
+  control, and keyboard shortcuts (press **?**).
+- **Your work survives a crash**: after every step the open model is saved in
+  the settings folder (the newest 10 are kept), so you can reopen it.
+- **Report a problem** (bottom-right corner) collects the recent error
+  messages, your steps, the version and your system into a zip in Downloads
+  and opens an email for you to send. Your model is only included if you tick
+  the box. Nothing is sent unless you send that email.
 - Runs on your own computer and works offline. The only thing it asks the
   internet is GitHub's latest version number, once a day (you can switch
   that off).
+
+**Extra tools for AI apps and scripts (not in the browser yet)**
+
+These are new in 0.3.0 and can be used through `meshright mcp` (see Use) or
+the app's API. They will get buttons in the browser later.
+
+- **Scan to print**: one step that removes the scan table, smooths, reduces
+  detail, cleans up and makes a closed solid.
+- **Smooth scan** (light, medium or heavy) without shrinking the model, and
+  **Remove base** to cut away the flat table a scan was standing on.
+- **Fill curved holes** with a patch that follows the surface, **Repair
+  wound** for a broken-off area whose piece is lost, and **Seam polish** for
+  rough joins.
+- **Symmetry repair**: finds the mirror plane of a part that should be
+  symmetric and rebuilds the broken side from the good one.
+- **Photo-guided repair**: match four or more points between a photo of the
+  intact part and the scan, and missing areas the photo shows are filled.
+- **Even out triangles** (remesh), a **curvature map** and a **deviation map**
+  against another scan.
+- **Molds**: check whether a part can be cast, then make a two or three piece
+  mold with a pour hole, air vents, alignment pins, bolt holes and optional
+  printable clamps.
 
 ## Ask AI
 
@@ -283,7 +323,8 @@ Everything happens on your own computer. MeshRight has no account and no
 tracking. It contacts the internet for two things only: GitHub's latest
 version number, once a day (switch it off in Help), and, only if you set it
 up, the AI service you chose in Ask AI, which receives the check report and
-your question, never the model.
+your question, never the model. Report a problem only opens an email in your
+own mail app; you see it and choose whether to send it.
 
 ## Words used
 
