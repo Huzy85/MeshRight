@@ -189,12 +189,15 @@ function renderCard(state) {
   ring.style.setProperty('--ring',
     state.score >= 90 && state.printable ? 'var(--good-ring)' : state.printable ? 'var(--warn-ring)' : 'var(--bad-ring)');
   $('card-score').textContent = state.score;
-  $('card-verdict').textContent = state.verdict;
 
   const issues = new Map(state.issues.map((i) => [i.code, i]));
   const toFix = state.issues.filter((i) => app.FIX_CODES.has(i.code));
   const stand = app.STAND_CODES.map((c) => issues.get(c)).find(Boolean);
   const tooBig = issues.get('too_big');
+  // "Ready to print" next to "needs standing up" reads as a contradiction.
+  $('card-verdict').textContent = state.verdict === 'Ready to print' && (stand || tooBig) ? 'Nearly ready to print' : state.verdict;
+  // An open surface such as a face relief has no hole Clean up can fill; it needs a back.
+  const thickFix = toFix.flatMap((i) => i.fixes || []).find((f) => f.action === 'thicken');
   const size = state.stats?.size_mm?.map((v) => app.fmt(v, v >= 100 ? 0 : 1)).join(' × ');
 
   const sig = toFix.map((i) => `${i.code}:${i.title}`).join('|');
@@ -243,15 +246,25 @@ function renderCard(state) {
     if (stuck) {
       const p = document.createElement('p');
       p.className = 'fine';
-      p.textContent = 'Clean up ran, but the same problems are still there. This file may be a loose pile of triangles rather than one surface. Make Solid rebuilds the surface from scratch, which usually works.';
+      p.textContent = thickFix
+        ? 'Clean up ran, but the same problems are still there. This is an open surface with no back, so there is no hole to fill. Give it thickness adds a back and makes it solid.'
+        : 'Clean up ran, but the same problems are still there. This file may be a loose pile of triangles rather than one surface. Make Solid rebuilds the surface from scratch, which usually works.';
       body.append(p);
-      body.append(button('Make Solid', () => app.runAction('make_solid', {}), {
+      if (!thickFix) {
+        body.append(button('Make Solid', () => app.runAction('make_solid', {}), {
+          primary: true,
+          title: 'Rebuilds the whole surface as one closed shell. Fine detail may soften a little.',
+        }));
+      }
+    }
+    if (thickFix) {
+      body.append(button(thickFix.label, () => app.runAction(thickFix.action, thickFix.params), {
         primary: true,
-        title: 'Rebuilds the whole surface as one closed shell. Fine detail may soften a little.',
+        title: 'Adds a back behind the open surface so the slicer sees a solid. You can change the thickness under Edit, Give it thickness.',
       }));
     }
     body.append(button('Make it printable', () => app.openCleanup(), {
-      primary: !stuck,
+      primary: !stuck && !thickFix,
       title: 'Shows the plan first: which holes get filled, which bits get removed. Nothing changes until you press Clean up.',
     }));
     body.append(button('One at a time', () => { stepper = { skipped: new Set() }; renderCard(app.lastState); }, {
@@ -272,6 +285,8 @@ function renderCard(state) {
       body.append(button('Which way is up?', () => app.openUp(), { primary: true, title: 'Shows the model from several likely bottoms. Pick the one that looks upright.' }));
     }
     body.append(button('Pick the bottom', () => $('pick-start').click(), { title: 'Click three or more spots that should touch the bed' }));
+    // Too big as well: offer the size fixes here too, or they stay hidden until it is stood up.
+    if (tooBig) tooBig.fixes.forEach((fix) => body.append(button(fix.label, () => app.runAction(fix.action, fix.params))));
     const sp = document.createElement('span'); sp.className = 'spacer'; body.append(sp);
     body.append(button('Leave it', () => app.exportAs('3mf'), { title: 'Export as it is. You can position it in your slicer instead.' }));
     return;
@@ -301,7 +316,7 @@ function renderCard(state) {
     body.append(button('Save STL', () => app.exportAs('stl'), { title: 'Works in every slicer' }));
   }
   const sp = document.createElement('span'); sp.className = 'spacer'; body.append(sp);
-  body.append(button('More formats', () => { $('export-menu').open = true; }, { title: 'OBJ, PLY, colours, or save your work as a MeshRight project' }));
+  body.append(button('More formats', () => { setTimeout(() => { $('export-menu').open = true; }); }, { title: 'OBJ, PLY, colours, or save your work as a MeshRight project' }));
 }
 
 function renderStepper(body, toFix) {
@@ -445,7 +460,7 @@ const cube = (() => {
     return null;
   }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(96, 96, false);
+  renderer.setSize(72, 72, false);
   renderer.setClearColor(0x000000, 0);
 
   const scene = new THREE.Scene();
@@ -536,12 +551,36 @@ const cube = (() => {
     canvas.title = hot >= 0 ? `Look from the ${FACES[hot].label.toLowerCase()}` : '';
     render(true);
   }
-  canvas.addEventListener('pointermove', (e) => setHot(pick(e)));
-  canvas.addEventListener('pointerleave', () => setHot(-1));
-  canvas.addEventListener('click', (e) => {
+  // Dragging the cube turns the view the same way dragging the model does;
+  // a press that hardly moves is a click on a face.
+  let drag = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!app.docId || e.button !== 0) return;
+    drag = { x: e.clientX, y: e.clientY, moved: false };
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drag) { setHot(pick(e)); return; }
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    if (!drag.moved) { drag.moved = true; setHot(-1); $('view-cube').classList.add('dragging'); }
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    orbitBy(-dx * 0.012, -dy * 0.012);
+  });
+  const endDrag = (e) => {
+    if (!drag) return;
+    const wasClick = !drag.moved;
+    drag = null;
+    $('view-cube').classList.remove('dragging');
+    if (e.type !== 'pointerup' || !wasClick) return;
     const i = pick(e);
     if (i >= 0 && app.docId) lookFrom(FACES[i].dir);
-  });
+  };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('pointerleave', () => { if (!drag) setHot(-1); });
 
   return { render, build };
 })();
@@ -586,6 +625,54 @@ function lookFrom(dir, { distance = null, target = null } = {}) {
   }
   requestAnimationFrame(step);
 }
+
+// Turn the big camera round the point it looks at: `left` round the up axis,
+// `up` over the top, both in radians. It stops at straight above and below.
+function orbitBy(left, up) {
+  if (!app.homeView) return;
+  glide = null;
+  const { camera, controls } = app;
+  const offset = camera.position.clone().sub(controls.target);
+  const s = new THREE.Spherical().setFromVector3(offset);
+  s.theta += left;
+  s.phi = Math.min(Math.PI - 1e-4, Math.max(1e-4, s.phi + up));
+  camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(s));
+  controls.update();
+}
+
+// The arrows round the cube step the view: 90 degrees left or right, 45 up or down.
+function turnView(way) {
+  if (!app.homeView || !app.docId) return;
+  const { camera, controls } = app;
+  const d = camera.position.clone().sub(controls.target).normalize();
+  let flat = new THREE.Vector3(d.x, 0, d.z);
+  if (flat.lengthSq() < 1e-6) {
+    // Looking straight down or up: the screen's up tells which side is which.
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+    flat = new THREE.Vector3(-up.x, 0, -up.z).multiplyScalar(Math.sign(d.y) || 1);
+    if (flat.lengthSq() < 1e-6) flat.set(0, 0, 1);
+  }
+  flat.normalize();
+  const phi = Math.acos(Math.max(-1, Math.min(1, d.y)));
+  let theta = Math.atan2(flat.x, flat.z);
+  let newPhi = phi;
+  const quarter = Math.PI / 2;
+  if (way === 'left' || way === 'right') {
+    // Snap to the next side, so a few clicks land on Front, Right, Back, Left.
+    const steps = theta / quarter;
+    theta = (way === 'right' ? Math.ceil(steps + 1e-3) : Math.floor(steps - 1e-3)) * quarter;
+  } else {
+    const eighth = Math.PI / 4;
+    const steps = phi / eighth;
+    newPhi = Math.min(4, Math.max(0, way === 'up' ? Math.ceil(steps - 1e-3) - 1 : Math.floor(steps + 1e-3) + 1)) * eighth;
+  }
+  const dir = [Math.sin(newPhi) * Math.sin(theta), Math.cos(newPhi), Math.sin(newPhi) * Math.cos(theta)];
+  lookFrom(dir);
+}
+for (const arrow of document.querySelectorAll('.cube-arrow')) {
+  arrow.addEventListener('click', () => turnView(arrow.dataset.look));
+}
+window.addEventListener('meshright:look', (e) => { if (app.docId) lookFrom(e.detail.dir); });
 
 function goHome() {
   if (!app.homeView) return;
@@ -633,7 +720,7 @@ const GUIDE = [
     ['Make Solid', 'Rebuilds the whole model as one sealed solid, like dipping it in wax. Use it when Clean up cannot close every hole, or a scan is a mess of overlapping surfaces. Details finer than about 0.2 mm soften a little.', 'Bottom of the Clean up sheet, or Edit in the panel.'],
     ['Give it thickness', 'For a scan that is only a surface, such as a face mask or a relief, with no back and no inside. Adds a back behind the surface so the slicer sees a solid. 2 mm suits most filament prints; use at least twice your nozzle size.', 'Edit section of the panel.'],
     ['Check walls', 'Finds walls thinner than your nozzle can print and colours them red. Thin walls vanish in the slicer or snap when you pick the print up. The sheet offers to scale the model up until the thinnest wall prints.', 'Edit section of the panel.'],
-    ['Problems list', 'Each problem says what it is, why it matters for printing and which fix handles it. Red ones will stop the print; orange ones are worth fixing. Problems is also a view option that draws them on the model: red lines are holes, orange lines are edges shared by too many triangles, purple is where the surface cuts through itself.', 'Advanced panel, or View at the top right.'],
+    ['Problems list', 'Each problem says what it is, why it matters for printing and which fix handles it. Red ones will stop the print; orange ones are worth fixing. Problems is also a view option that draws them on the model: red lines are holes, orange lines are tangled edges, purple is where the surface cuts through itself.', 'Advanced panel, or View at the top right.'],
   ]],
   ['Position and size', [
     ['Stand it up', 'Scans often come in lying on their side. Which way is up? shows the model from several likely bottoms; pick the one that looks upright. Pick the bottom lets you click three or more spots that should touch the bed and turns the model so they lie flat. Best way to print tries many positions and ranks them by how much support they need and how steadily they stand.', 'Stand up on the rail, or Position in the panel.'],
@@ -751,7 +838,7 @@ const TIPS = {
   '#sculpt-done': 'Finish sculpting. Every stroke is already in History and can be undone.',
   '#tip-close': 'Hide this tip',
   '#error-retry': 'Pick a different file to open',
-  '#toggle-coin': 'Show a 1p coin next to the model, so you can judge the size at a glance',
+  '#toggle-coin': 'Show a 23 mm coin (like a £1 or 1 €) next to the model, so you can judge the size at a glance',
   '#toggle-changes': 'Colour the triangles each step changed, so you can see exactly what a fix did',
   '#update-auto': 'Once a day, ask GitHub for the newest version number. Nothing else is sent.',
   '#update-check': 'Ask GitHub now whether a newer MeshRight is out',

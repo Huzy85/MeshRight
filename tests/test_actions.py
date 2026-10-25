@@ -346,3 +346,23 @@ def test_remesh_with_smooth():
 def test_remesh_is_registered():
     """remesh action is in the REGISTRY."""
     assert "remesh" in REGISTRY
+
+
+def split_corners(mesh):
+    """Every triangle with its own three corners, as some raw PLY and STL files store it."""
+    return trimesh.Trimesh(mesh.vertices[mesh.faces].reshape(-1, 3), np.arange(len(mesh.faces) * 3).reshape(-1, 3), process=False)
+
+
+@pytest.mark.parametrize("name, params", [
+    ("smooth_scan", {"strength": "medium"}),
+    ("scan_to_print", {"target_triangles": 10000}),
+    ("repair_wound", {"smooth_passes": 3, "max_hole_edges": 600}),
+])
+@pytest.mark.parametrize("shape", ["sphere", "torus"])
+def test_smoothing_survives_split_corners(name, params, shape):
+    mesh = trimesh.creation.icosphere(3, radius=20) if shape == "sphere" else trimesh.creation.torus(20, 6)
+    raw = split_corners(mesh)
+    before = raw.vertices.copy()
+    result, _ = run_action(raw, name, params)
+    assert result.body_count == 1 and result.is_watertight
+    assert np.array_equal(raw.vertices, before)  # the original is left alone

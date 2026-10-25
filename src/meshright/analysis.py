@@ -292,30 +292,79 @@ def _unit_fixes(largest: float, units: tuple[str, ...]) -> list[dict]:
     ]
 
 
+def _section_outline(mesh: trimesh.Trimesh, height: float) -> np.ndarray | None:
+    """The 2D points where a horizontal slice meets the surface, or None."""
+    segments = trimesh.intersections.mesh_plane(mesh, plane_normal=(0, 0, 1), plane_origin=(0, 0, height))
+    if len(segments) < 2:
+        return None
+    return segments.reshape(-1, 3)[:, :2]
+
+
 def _section_outline_area(mesh: trimesh.Trimesh, height: float) -> float:
     """Area inside the outline of a horizontal slice (convex outline, which is
     close enough for judging how well a base will stand)."""
     from scipy.spatial import ConvexHull, QhullError
 
-    segments = trimesh.intersections.mesh_plane(mesh, plane_normal=(0, 0, 1), plane_origin=(0, 0, height))
-    if len(segments) < 2:
+    points = _section_outline(mesh, height)
+    if points is None:
         return 0.0
     try:
-        return float(ConvexHull(segments.reshape(-1, 3)[:, :2]).volume)
+        return float(ConvexHull(points).volume)
     except (QhullError, ValueError):
         return 0.0
 
 
-def suggest_flat_cut(mesh: trimesh.Trimesh) -> float | None:
-    """Smallest cut (mm) that gives the bottom a reasonable flat area, or None."""
+def suggest_flat_cut(mesh: trimesh.Trimesh, steady: bool = False) -> float | None:
+    """Smallest cut (mm) that gives the bottom a reasonable flat area, or None.
+
+    With ``steady``, the cut must also put the model's weight above the new
+    base. A model that leans out past its foot tips over however much is cut,
+    so offering 0.2 mm again and again would never help."""
+    from .orient import _inside_polygon
+
     height = float(mesh.extents[2])
     low = float(mesh.bounds[0][2])
     wanted = max(MIN_CONTACT_MM2, GOOD_CONTACT_SHARE * float(mesh.extents[0] * mesh.extents[1]))
+    centre = (mesh.center_mass if mesh.is_watertight and mesh.volume > 0 else mesh.centroid)[:2]
     for cut in np.unique(np.r_[0.2, 0.5, np.linspace(0.5, 0.25 * height, 24)]):
         if cut >= 0.25 * height:
             break
-        if _section_outline_area(mesh, low + cut) >= wanted:
-            return float(round(cut, 1 if cut >= 1 else 2))
+        if _section_outline_area(mesh, low + cut) < wanted:
+            continue
+        if steady:
+            points = _section_outline(mesh, low + cut)
+            if points is None or not _inside_polygon(_kept_centre(mesh, low + cut, centre), points):
+                continue
+        return float(round(cut, 1 if cut >= 1 else 2))
+    return None
+
+
+def _kept_centre(mesh: trimesh.Trimesh, height: float, fallback: np.ndarray) -> np.ndarray:
+    """Where the weight sits, seen from above, once everything below ``height`` is cut off."""
+    try:
+        kept = trimesh.intersections.slice_mesh_plane(mesh, (0, 0, 1), (0, 0, height), cap=True)
+        if kept.is_watertight and kept.volume > 0:
+            return kept.center_mass[:2]
+    except Exception:  # the cap can fail on rough scans; the whole model's centre is close enough
+        pass
+    return fallback
+
+
+def _steady_side(mesh: trimesh.Trimesh) -> dict | None:
+    """A fix that turns the model onto a side it stands on steadily, if it has one."""
+    from .orient import DOWN, _flat_side_candidates, _unit
+
+    for cand in sorted(_flat_side_candidates(mesh), key=lambda c: -c["score"]):
+        if "tip" in cand["reason"]:
+            continue
+        down = _unit(cand["down"])
+        if down @ _unit(DOWN) > 0.98:
+            continue  # that is the bottom it already has
+        return {
+            "label": "Turn it onto a steady side",
+            "action": "set_bottom",
+            "params": dict(zip(("down_x", "down_y", "down_z"), (round(float(v), 6) for v in down))),
+        }
     return None
 
 
@@ -326,11 +375,17 @@ def _stability_issues(mesh: trimesh.Trimesh) -> list[Issue]:
     base = float(mesh.extents[0] * mesh.extents[1]) or 1.0
     if steady and area >= min(MIN_CONTACT_MM2, SMALL_CONTACT_SHARE * base):
         return []
-    cut = suggest_flat_cut(mesh)
+    cut = suggest_flat_cut(mesh, steady=not steady)
     fixes = [
         {"label": f"Cut {cut:g} mm flat", "action": "cut_flat_bottom", "params": {"cut_mm": cut}},
         {"label": f"Add a {cut:g} mm flat base", "action": "add_flat_base", "params": {"depth_mm": cut}},
     ] if cut else []
+    if not steady:
+        # Cutting a lot off to stop it tipping loses part of the model, so
+        # turning it onto a side it already stands on comes first then.
+        side = _steady_side(mesh)
+        if side and (not cut or cut > max(2.0, 0.05 * float(mesh.extents[2]))):
+            fixes.insert(0, side)
     if not steady:
         return [Issue(
             code="may_tip_over",
@@ -516,9 +571,9 @@ def analyze(mesh: trimesh.Trimesh, crossing: np.ndarray | None | bool = True, pr
         issues.append(Issue(
             code="non_manifold",
             severity="error",
-            title=f"{n} edge{'s' if n != 1 else ''} shared by too many triangles",
+            title=f"{n} tangled edge{'s' if n != 1 else ''}",
             detail=(
-                "Some edges are shared by more than two triangles, like pages "
+                "Some edges have more than two faces meeting on them, like pages "
                 "glued to one spine. Slicers often fail or guess here. Shown in orange."
             ),
             count=n,
@@ -716,7 +771,10 @@ def analyze(mesh: trimesh.Trimesh, crossing: np.ndarray | None | bool = True, pr
     if not printable:
         # Any blocking problem keeps the score out of the "looks fine" range.
         score = min(score, UNPRINTABLE_SCORE_CAP)
-    if printable and score >= 90:
+    if printable and score >= 90 and any(i.code in ("may_tip_over", "small_contact", "off_bed") for i in issues):
+        # "Ready to print" beside "needs standing up" reads as a contradiction.
+        verdict = "Nearly ready to print"
+    elif printable and score >= 90:
         verdict = "Ready to print"
     elif printable:
         verdict = "Printable, with minor issues"

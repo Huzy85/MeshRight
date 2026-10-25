@@ -120,3 +120,10 @@ def test_off_bed_offers_put_on_bed(cube):
     cube.apply_translation((0, 0, 25))
     issue = next(i for i in analyze(cube).issues if i.code == "off_bed")
     assert issue.title == "Floating 15 mm above the bed"
+
+
+def test_verdict_says_nearly_ready_when_it_needs_standing_up():
+    box = trimesh.creation.box(extents=(20, 20, 20))  # centred, so half is below the bed
+    report = analyze(box)
+    assert report.score >= 90
+    assert report.verdict == "Nearly ready to print"

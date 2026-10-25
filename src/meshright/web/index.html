@@ -49,7 +49,14 @@
           <div id="slicer-items" hidden></div>
         </div>
       </details>
-      <label class="button primary" for="file-input" title="Open a 3D model from this computer (Ctrl+O)">Open</label>
+      <details id="open-menu" class="menu">
+        <summary class="button primary" title="Open another model, try a sample, or close this one and start again">Open</summary>
+        <div class="menu-items" role="menu">
+          <button type="button" role="menuitem" id="open-file">Open a file…<small>From this computer (Ctrl+O). Opens next to this one</small></button>
+          <div id="open-samples" hidden></div>
+          <button type="button" role="menuitem" id="close-model" hidden>Close this model<small>Back to the start. Other open models stay open</small></button>
+        </div>
+      </details>
       <input id="file-input" type="file" accept=".stl,.obj,.ply,.3mf,.glb,.gltf,.off,.amf,.usd,.usda,.usdc,.usdz,.fbx,.xyz,.asc,.pts,.e57,.las,.laz,.meshright" multiple hidden>
     </div>
   </header>
@@ -142,8 +149,12 @@
 
       <!-- Top right: the view cube and view options. -->
       <div id="corner-tr" class="corner">
-        <div id="view-cube" title="Drag the model to turn it. Click a face of this cube to look from that side, like a slicer's view cube.">
-          <canvas id="cube-canvas" width="192" height="192"></canvas>
+        <div id="view-cube">
+          <canvas id="cube-canvas" width="144" height="144" title="Drag to turn the view. Click a face, edge or corner to look from there."></canvas>
+          <button type="button" class="cube-arrow" data-look="up" title="Turn the view up" aria-label="Turn the view up"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 7 5 3l3 4z"/></svg></button>
+          <button type="button" class="cube-arrow" data-look="down" title="Turn the view down" aria-label="Turn the view down"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3l3 4 3-4z"/></svg></button>
+          <button type="button" class="cube-arrow" data-look="left" title="Turn the view left" aria-label="Turn the view left"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M7 2 3 5l4 3z"/></svg></button>
+          <button type="button" class="cube-arrow" data-look="right" title="Turn the view right" aria-label="Turn the view right"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3 2l4 3-4 3z"/></svg></button>
         </div>
         <div class="corner-row">
           <button type="button" id="view-home" title="Back to the starting view, with the whole model in sight (0 or F)">Home</button>
@@ -258,7 +269,7 @@
         <button type="button" id="piece-cancel">Cancel</button>
       </div>
       <div id="pick-bar" class="pill-bar top" hidden>
-        <span id="pick-text">Click 3 or more points on the bottom of the model</span>
+        <span id="pick-text">Click 3 or more spots that should touch the bed</span>
         <button type="button" id="pick-undo">Remove last</button>
         <button type="button" class="primary" id="pick-done" disabled>Lay flat</button>
         <button type="button" id="pick-cancel">Cancel</button>
@@ -320,7 +331,7 @@
             <label class="field" title="Bottom to top"><span>Height</span><input id="size-z" data-axis="z" type="number" min="0.001" step="any" inputmode="decimal"><em>mm</em></label>
           </form>
           <p class="hint">Change one size and the others follow, so the shape stays the same.</p>
-          <label class="toggle-line"><input type="checkbox" id="toggle-coin">Show a coin next to it for scale (23 mm, like a 1 € or 25 ¢ coin)</label>
+          <label class="toggle-line"><input type="checkbox" id="toggle-coin">Show a coin next to it for scale (23 mm, like a £1 or 1 € coin)</label>
         </section>
 
         <section id="sec-position">
@@ -377,7 +388,7 @@
           </div>
           <div class="row">
             <button type="button" class="soft" id="sculpt-start" title="Brush the surface: smooth, flatten, push in or out">Sculpt</button>
-            <button type="button" class="soft" id="part-start" title="Turn an area of the surface into a piece that fits it">Make a part</button>
+            <button type="button" class="soft" id="part-start" title="Build a new, separate piece that fits snugly on an area you loop round, like a cover or a pad. This model is not changed.">Make a part</button>
           </div>
           <div class="row">
             <label class="button soft" for="combine-input" title="Join another model on, or cut its shape out">Combine…</label>
@@ -393,7 +404,7 @@
           <dl id="stats"></dl>
           <div class="legend">
             <span><i class="swatch open"></i>Open edges (holes)</span>
-            <span><i class="swatch nonmanifold"></i>Edges shared by too many triangles</span>
+            <span><i class="swatch nonmanifold"></i>Tangled edges</span>
             <span><i class="swatch crossing"></i>Surface cutting through itself</span>
             <span><i class="swatch inside"></i>Inside of the model</span>
           </div>
@@ -634,10 +645,11 @@
   <dialog id="part-dialog" aria-labelledby="part-title">
     <form method="dialog">
       <h2 id="part-title">Make a part</h2>
-      <p class="sub">Turns the blue area into a solid piece shaped to fit it, such as a pad, a grip or a cover. It opens as a new model; this one stays as it is.</p>
+      <p class="sub">Builds a new, separate piece that sits snugly on the blue area, like a cover, a pad or a grip that follows the curve of the surface. Example: loop round the back of a phone holder to get a rubber pad that fits it exactly.</p>
+      <p class="hint">The piece opens as a new model next to this one (see the tabs at the top). This model is not changed.</p>
       <div class="segmented" role="radiogroup" aria-label="Where the part goes" id="part-side">
-        <button type="button" role="radio" aria-checked="true" data-side="outside" title="Sits on top of the surface, like a cover">On the outside</button>
-        <button type="button" role="radio" aria-checked="false" data-side="inside" title="Fills in behind the surface">Behind the surface</button>
+        <button type="button" role="radio" aria-checked="true" data-side="outside" title="The piece sits on top of the surface, like a cap or a pad">On the outside</button>
+        <button type="button" role="radio" aria-checked="false" data-side="inside" title="The piece fills the space behind the surface, like a liner inside a shell">Behind the surface</button>
       </div>
       <div class="fields">
         <label class="field"><span>Thickness</span><input id="part-thickness" type="number" min="0.4" max="100" step="0.1" value="3"><em>mm</em></label>
@@ -673,6 +685,10 @@
         <label class="field"><span>Wall thickness</span><input id="hollow-wall" type="number" min="0.8" max="20" step="0.1" value="2"><em>mm</em></label>
       </div>
       <ul class="options"><li><label><input type="checkbox" id="hollow-drain" checked>Add drain holes at the bottom</label></li></ul>
+      <div class="fields one" id="hollow-hole-field">
+        <label class="field" title="How wide each drain hole is. 3 to 5 mm drains most models; a bigger hole drains faster and is easier to clean."><span>Drain hole width</span><input id="hollow-hole" type="number" min="1" max="30" step="0.5" value="3"><em>mm</em></label>
+      </div>
+      <p class="hint">The holes go in the underside, so after hollowing the view turns to show them from below.</p>
       <div class="dialog-actions">
         <button type="submit" value="apply" class="primary">Hollow</button>
         <button type="submit" value="cancel">Cancel</button>

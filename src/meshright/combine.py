@@ -62,6 +62,9 @@ def combine(base: trimesh.Trimesh, added: trimesh.Trimesh, name: str, matrix: np
     touching = not (base_solid ^ added_solid).is_empty()
 
     if how == "join":
+        # Wholly inside the model, a join changes nothing; say so instead of "Joined".
+        if touching and (added_solid - base_solid).volume() < 0.01 * added_solid.volume():
+            raise ValueError(f"{name} sits completely inside the model, so joining adds nothing. Move it so part of it sticks out.")
         result = base_solid + added_solid
         receipt = f"Joined {name} to the model"
         if not touching:

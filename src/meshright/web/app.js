@@ -774,8 +774,10 @@ async function change(path, body, receipt, busyText) {
     await showState(state, { keepView: true });
     const text = receipt ? receipt(state) : null;
     if (text) showStatus(text);
+    return true;
   } catch (err) {
     showStatus(err.message, 'error');
+    return false;
   } finally {
     setBusy(false);
   }
@@ -907,7 +909,7 @@ let pointerStart = null;
 function updatePickBar() {
   const n = pickPoints.length;
   $('pick-text').textContent = n < 3
-    ? `Click ${3 - n} more point${3 - n === 1 ? '' : 's'} on the bottom of the model`
+    ? `Click ${3 - n} more point${3 - n === 1 ? '' : 's'} that should touch the bed`
     : `${n} points picked. More points even out scan bumps.`;
   $('pick-done').disabled = n < 3;
   $('pick-undo').disabled = n === 0;
@@ -915,7 +917,7 @@ function updatePickBar() {
 
 function startPick() {
   if (!docId || !content) return;
-  stopPiece();
+  exitModes();
   picking = true;
   pickPoints = [];
   $('status').hidden = true;
@@ -953,7 +955,7 @@ let pieceMode = false;
 
 function startPiece() {
   if (!docId || !content || busy) return;
-  stopPick();
+  exitModes();
   pieceMode = true;
   document.body.classList.add('picking');
   $('piece-bar').hidden = false;
@@ -1032,7 +1034,7 @@ let drawing = false;
 let lassoPurpose = 'erase';  // 'erase', or 'part' (Make a part)
 const LASSO_TEXT = {
   erase: { draw: 'Draw a loop around what you want to erase', ready: 'The red area will be erased', button: 'Erase', colour: 0xff3b30, css: '#ff3b30', fill: 'rgba(255, 59, 48, 0.08)' },
-  part: { draw: 'Draw a loop around the area the part should fit', ready: 'The blue area becomes the part', button: 'Make part…', colour: 0x0071e3, css: '#0071e3', fill: 'rgba(0, 113, 227, 0.08)' },
+  part: { draw: 'Draw a loop round the area the new part should cover', ready: 'The blue area is where the part goes. Press Make part… to carry on', button: 'Make part…', colour: 0x0071e3, css: '#0071e3', fill: 'rgba(0, 113, 227, 0.08)' },
 };
 
 function viewMatrix() {
@@ -1464,6 +1466,7 @@ function applyCoin() {
 
 $('toggle-coin').addEventListener('change', () => {
   applyCoin();
+  if ($('toggle-coin').checked && coin) showStatus('The gold disk beside the model is a 23 mm coin, to show the real size.');
   try { localStorage.setItem('meshright.coin', $('toggle-coin').checked ? '1' : ''); } catch { /* not saved */ }
 });
 try { $('toggle-coin').checked = localStorage.getItem('meshright.coin') === '1'; } catch { /* default off */ }
@@ -1721,6 +1724,12 @@ let holePreview = null;
 function startHole() {
   if (!docId || !content || busy) return;
   exitModes();
+  // A hole needs a closed model; say so now, not after the user has placed it.
+  const open = (lastState?.issues || []).find((i) => ['holes', 'non_manifold'].includes(i.code));
+  if (open) {
+    showStatus(`Add a hole needs a closed model, and this one has a problem: ${open.title.toLowerCase()}. Make it printable first, then add the hole.`);
+    return;
+  }
   holing = true;
   holeSpot = null;
   document.body.classList.add('picking');
@@ -1837,6 +1846,7 @@ async function checkWalls() {
 
 $('walls-check').addEventListener('click', checkWalls);
 
+$('hollow-drain').addEventListener('change', () => { $('hollow-hole').disabled = !$('hollow-drain').checked; });
 $('hollow-open').addEventListener('click', () => {
   if (!docId || busy) return;
   exitModes();
@@ -1845,7 +1855,12 @@ $('hollow-open').addEventListener('click', () => {
 });
 $('hollow-dialog').addEventListener('close', () => {
   if ($('hollow-dialog').returnValue === 'apply') {
-    runAction('hollow', { wall_mm: Number($('hollow-wall').value) || 2, drain_holes: $('hollow-drain').checked });
+    const drain = $('hollow-drain').checked;
+    const hole = Math.min(30, Math.max(1, Number($('hollow-hole').value) || 3));
+    runAction('hollow', { wall_mm: Number($('hollow-wall').value) || 2, drain_holes: drain, hole_mm: hole }).then((ok) => {
+      // The holes are on the underside, where the starting view never looks.
+      if (ok && drain) window.dispatchEvent(new CustomEvent('meshright:look', { detail: { dir: [0.35, -1, 0.5] } }));
+    });
   }
   $('hollow-dialog').returnValue = '';
 });
@@ -2297,9 +2312,17 @@ function renderPlan(plan) {
   const list = $('plan-steps');
   list.replaceChildren();
   const doable = plan.steps.filter((s) => s.checked !== false);
-  $('plan-intro').textContent = doable.length
+  const issues = lastState?.issues || [];
+  const openSurface = issues.some((i) => (i.fixes || []).some((f) => f.action === 'thicken'));
+  const units = issues.find((i) => i.code === 'tiny_model' || i.code === 'huge_model');
+  let intro = doable.length
     ? 'This is what will change. Untick anything you want to keep as it is.'
-    : 'Nothing to clean up. The surface already looks tidy.';
+    : openSurface
+      ? 'Nothing here for Clean up. This is an open surface with no back, so there is no hole to fill. Use Give it thickness instead.'
+      : 'Nothing to clean up. The surface already looks tidy.';
+  // Sizes below are in the file's units; at the wrong scale they mislead.
+  if (units && doable.length) intro = `${units.title}, so the sizes below are probably wrong. Fix the size first (the buttons on the card), then clean up. ` + intro;
+  $('plan-intro').textContent = intro;
   for (const step of plan.steps) {
     const li = document.createElement('li');
     const option = PLAN_OPTIONS[step.key];
@@ -2641,8 +2664,11 @@ for (const button of document.querySelectorAll('#export-menu [data-format]')) {
   button.addEventListener('click', () => exportAs(button.dataset.format));
 }
 document.addEventListener('click', (e) => {
-  if (!$('export-menu').contains(e.target)) $('export-menu').open = false;
+  for (const id of ['export-menu', 'open-menu']) if (!$(id).contains(e.target)) $(id).open = false;
 });
+$('open-file').addEventListener('click', () => { $('open-menu').open = false; $('file-input').click(); });
+$('close-model').addEventListener('click', () => { $('open-menu').open = false; if (docId) closeTab(docId); });
+stateListeners.push((state) => { $('close-model').hidden = !state; });
 
 for (const button of document.querySelectorAll('#panel-report [data-action]')) {
   button.addEventListener('click', () => {
@@ -2682,6 +2708,8 @@ async function loadSamples() {
   try {
     const list = await (await fetch('api/samples')).json();
     const holder = $('samples').querySelector('.sample-list');
+    const menu = $('open-samples');
+    if (list.length) menu.append(Object.assign(document.createElement('p'), { textContent: 'Samples to try' }));
     for (const item of list) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -2700,8 +2728,16 @@ async function loadSamples() {
         }
       });
       holder.append(button);
+      // The same samples in the Open menu, so they can be reached with a model open.
+      const entry = document.createElement('button');
+      entry.type = 'button';
+      entry.setAttribute('role', 'menuitem');
+      entry.append(button.textContent, Object.assign(document.createElement('small'), { textContent: item.about }));
+      entry.addEventListener('click', () => { $('open-menu').open = false; button.click(); });
+      menu.append(entry);
     }
     $('samples').hidden = list.length === 0;
+    menu.hidden = list.length === 0;
   } catch {
     // Samples are optional; the app works without them.
   }
@@ -2712,9 +2748,9 @@ loadSamples();
 // only; if storage is blocked, tips simply show again.
 const TIPS = {
   'erase-start': 'Draw a loop around what to erase. "Facing me only" leaves the far side alone. Undo brings anything back.',
-  'part-start': 'Draw a loop around the area the part should fit, for example where a grip or pad will sit. Turn the view first so that area faces you.',
+  'part-start': 'Draw a loop round the area the new part should cover, for example where a grip or pad will sit. Turn the view first so that area faces you.',
   'piece-start': 'Click any loose piece to erase it, for example a stand or crumbs a scanner picked up.',
-  'cut-start': 'Slide to place the cut. Pins keep the parts lined up when you glue them.',
+  'cut-start': 'Across splits top from bottom; Left–right and Front–back cut the other ways. Slide to place the cut. Pins keep the parts lined up when you glue them, and Numbers engraves 1, 2 on the cut faces so you know which goes where.',
   'hole-start': 'Click where the hole should start. Depth 0 goes all the way through.',
   'measure-start': 'Click two points. If you know the real distance, type it and MeshRight resizes the model to match.',
   'sculpt-start': 'Drag across the model to brush it. Drag off the model to turn the view. [ and ] change the brush size; each stroke can be undone.',
