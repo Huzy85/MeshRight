@@ -8,8 +8,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 SEP=":"
-case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) SEP=";" ;; esac
+SPLASH=()
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) SEP=";"; SPLASH=(--splash packaging/splash.png) ;;
+esac
 pyinstaller --noconfirm --clean --onefile --name MeshRight \
+  ${SPLASH[@]+"${SPLASH[@]}"} \
   --add-data "src/meshright/web${SEP}meshright/web" \
   --collect-submodules uvicorn \
   --collect-data trimesh \

@@ -41,6 +41,11 @@ New browser UI, built for people who have never repaired a model before:
   tooltip. Each sculpt stroke reports what it did.
 - The "must be closed" message no longer says "cut" when you were adding a hole,
   checking walls or combining; it says what is needed and what to press.
+- **Windows app no longer starts as a blank black window**: it prints "Starting
+  MeshRight, the first start can take a minute" straight away, and the Windows
+  build shows a small splash picture while the single file unpacks.
+- **Dropdown lists readable in dark mode**: the open list (printer, material and
+  the rest) had light text on a white background; it now has a solid background.
 
 Twelve new actions for scan-to-print, repair, casting and mold making:
 
