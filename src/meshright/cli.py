@@ -122,6 +122,18 @@ def _fix(args: argparse.Namespace) -> int:
     return 0 if all(r.ready for r, _ in outputs) else 1
 
 
+def _open_browser(url: str) -> None:
+    # The packaged Windows and Linux apps show a splash picture while they
+    # unpack; it only exists inside those builds.
+    try:
+        import pyi_splash  # type: ignore[import-not-found]
+
+        pyi_splash.close()
+    except Exception:
+        pass
+    webbrowser.open(url)
+
+
 def _serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -146,7 +158,7 @@ def _serve(args: argparse.Namespace) -> int:
             return 2
     print(f"MeshRight is running at {url}  (press Ctrl+C to stop)")
     if not args.no_browser:
-        threading.Timer(1.0, webbrowser.open, args=(url,)).start()
+        threading.Timer(1.0, _open_browser, args=(url,)).start()
     from .server import app
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

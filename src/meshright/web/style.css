@@ -164,6 +164,9 @@ select {
   border-radius: 8px;
   background: var(--fill);
 }
+/* The open list is drawn by the browser on a plain background; the see-through
+   fill above leaves light text on white in dark mode, so give it a solid one. */
+select option, select optgroup { background: var(--surface-solid); color: var(--text); }
 .fields.four { grid-template-columns: repeat(4, 1fr); margin-top: 12px; }
 .fields.one { grid-template-columns: minmax(0, 160px); }
 #cut-height { width: 140px; accent-color: var(--accent); margin: 0 10px 0 4px; }
