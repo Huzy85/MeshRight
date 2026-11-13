@@ -77,6 +77,9 @@ def _candidate_pairs(triangles: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         keep = overlap & np.all(home == cells[left], axis=1) & (a != b)
         found_a.append(a[keep])
         found_b.append(b[keep])
+    if not found_a:  # no two triangles share a cell, so nothing can cross
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty
     a = np.concatenate(found_a)
     b = np.concatenate(found_b)
     return np.minimum(a, b), np.maximum(a, b)

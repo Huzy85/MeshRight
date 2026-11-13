@@ -39,6 +39,13 @@ def test_corners_a_rounding_step_apart_count_as_touching():
     assert len(crossing_pairs(vertices, faces)) == 0
 
 
+def test_crossing_detector_triangles_far_apart():
+    # No two triangles share a grid cell (a small patch after Clean up fills a hole): nothing crosses, no crash.
+    vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [50, 50, 50], [51, 50, 50], [50, 51, 50]], float)
+    faces = np.array([[0, 1, 2], [3, 4, 5]])
+    assert crossing_pairs(vertices, faces).shape == (0, 2)
+
+
 def test_crossing_detector_simple_case():
     vertices = np.array([[0, 0, 0], [2, 0, 0], [0, 2, 0], [0.5, 0.5, -1], [0.5, 0.5, 1], [1.5, 0.5, 0]], float)
     faces = np.array([[0, 1, 2], [3, 4, 5]])
