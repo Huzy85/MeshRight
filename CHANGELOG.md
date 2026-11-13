@@ -1,6 +1,6 @@
 # Changes
 
-## 0.3.0 (unreleased)
+## 0.3.0
 
 New browser UI, built for people who have never repaired a model before:
 
