@@ -10,7 +10,7 @@ readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "MeshRight contributors" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = ["3d-printing", "mesh", "mesh-repair", "stl", "3d-scanning", "meshmixer"]
 classifiers = [
     "Development Status :: 3 - Alpha",

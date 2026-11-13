@@ -215,7 +215,7 @@ server.
 > Linux, allow the file to run as a program (right-click, Properties,
 > Permissions).
 
-**With Python** (3.10 or newer):
+**With Python** (3.11 or newer):
 
 ```bash
 pip install meshright
