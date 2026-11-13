@@ -1,5 +1,9 @@
 # Changes
 
+## 0.3.1
+
+- **Clean up no longer fails on some scans.** On scans with many small holes, Clean up could stop with "need at least one array to concatenate" after filling small patches. Fixed, with a test.
+
 ## 0.3.0
 
 New browser UI, built for people who have never repaired a model before:
