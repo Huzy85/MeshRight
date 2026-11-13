@@ -33,6 +33,7 @@ dependencies = [
     "fast-simplification>=0.1.7",
     "PyMCubes>=0.1.4",
     "manifold3d>=2.5",
+    "pillow>=13.0",  # photo matching; older versions have known security bugs
 ]
 
 [project.optional-dependencies]
