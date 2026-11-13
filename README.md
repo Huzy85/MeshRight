@@ -1,5 +1,10 @@
 # MeshRight
 
+[![Latest release](https://img.shields.io/github/v/release/Huzy85/MeshRight)](https://github.com/Huzy85/MeshRight/releases)
+[![PyPI](https://img.shields.io/pypi/v/meshright)](https://pypi.org/project/meshright/)
+[![Tests](https://github.com/Huzy85/MeshRight/actions/workflows/tests.yml/badge.svg)](https://github.com/Huzy85/MeshRight/actions/workflows/tests.yml)
+[![Licence: GPL v3](https://img.shields.io/badge/licence-GPL%20v3-blue)](LICENSE)
+
 **Check and fix 3D scans and models for printing. Free, simple, and on your own computer.**
 
 MeshRight is a free, open source alternative to Meshmixer's repair tools
@@ -344,6 +349,11 @@ See [CHANGELOG.md](CHANGELOG.md).
 
 Contributions are welcome, from bug reports with example files to new repair
 tools. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+New here? The issues marked
+[good first issue](https://github.com/Huzy85/MeshRight/labels/good%20first%20issue)
+are small, self-contained jobs with a clear "done", each pointing to the file
+to change.
 
 ## Licence
 
